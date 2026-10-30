@@ -1,24 +1,38 @@
 # Mosaic — Page Media Gallery
 
-A Chrome Manifest V3 extension that collects images and videos from the active page and presents them in a searchable, filterable gallery.
+A modern Chrome Manifest V3 extension built with React and Tailwind CSS that collects images and videos from the active page and presents them in a searchable, filterable gallery overlay.
+
+## Development & Build
+
+```bash
+# Install dependencies
+npm install
+
+# Build the extension bundle (output to dist/)
+npm run build
+
+# Watch mode for live development
+npm run watch
+```
 
 ## Install in Chrome
 
 1. Open `chrome://extensions`.
-2. Turn on **Developer mode**.
-3. Choose **Load unpacked** and select this folder.
-4. Open a regular website and click the Mosaic extension icon.
+2. Turn on **Developer mode** (top right switch).
+3. Click **Load unpacked** and select this directory.
+4. Open any webpage (Reddit, YouTube, X, Google Images, or any website) and click the Mosaic extension icon or press **⌘⌥M** (Mac) / **Alt+Shift+M** (Windows/Linux).
+
+## Tech Stack & Architecture
+
+- **React 18**: Modular components (`Header`, `Toolbar`, `FilterPanel`, `GalleryGrid`, `MediaCard`, `MediaViewer`, `SettingsDrawer`, etc.)
+- **Tailwind CSS**: Utility-first styling with custom theme tokens (Light, Dark, AMOLED Black, System)
+- **Vite 6**: Fast ESM bundler producing optimized standalone assets (`dist/gallery.js` and `dist/gallery.css`)
+- **Chrome Manifest V3**: Service worker (`background.js`), injected content script (`content.js`), iframe gallery overlay (`gallery.html`), Declarative Net Request rules for video streaming, and indexedDB (`mosaic-media-library`) for local offline media.
 
 ## Features
 
-- Scans page images, responsive image sources, video sources and posters, video links, and optional CSS background images.
-- Search, image/video/saved-file/favorites tabs, orientation and minimum-size filters, duplicate/tiny-image controls, sorting, grid and masonry layouts.
-- Full-screen preview with previous/next navigation, keyboard controls, favorites, and a private Mosaic media library.
-- Newly saved media is downloaded once by Chrome into Downloads/Mosaic. The Library keeps the Chrome download ID and metadata, so it can show the file in Finder or open it in the default media app without creating a second copy. Previously saved items in a chosen folder remain there and continue to appear in the Library.
-- The expanded viewer keeps save and navigation controls compact; its More menu offers Google Lens, Bing Visual Search, TinEye, copying media/post links, and opening the related X post or Reddit discussion.
-- Saved media appears in a roomy grid with dates, site labels, Finder reveal, and saved-video open actions. The full-screen viewer has a Fit/Fill toggle and a saved autoplay preference.
-- Live discovery checks the page while it changes and retains existing gallery cards as new media arrives.
-- Light/dark/system appearance, density, image metadata, background scan, saved-video autoplay, and other stored preferences.
-- Runs locally in your browser. Favorites and preferences are stored in Chrome local storage; newly saved files remain in Downloads/Mosaic and their download references are stored by the extension. Existing folder-based saves remain in their original folder.
-
-Save a media item before the site removes it. The extension cannot recover a video after its source is unavailable, and some X or Reddit posts do not expose a downloadable video URL.
+- **Site-Aware Scanners**: Dedicated extractors for YouTube, Reddit, X (Twitter), Google Images, Imgur, Instagram, Flickr, Tumblr, and generic web pages.
+- **Deduplication & High-Res Picking**: Identifies canonical media IDs, selects highest resolution streams (e.g. Reddit DASH permutations, Twitter syndication API), and skips duplicates.
+- **Interactive Lightbox (Media Viewer)**: Pure black fullscreen modal with video controls (play, pause, seek, volume, loop, autoplay, fullscreen), double-click Fit/Fill mode, and external actions (reverse image search via Google Lens/Bing/TinEye, original post links).
+- **Offline Library & Downloads**: Saved media downloads into `Downloads/Mosaic` with Finder reveal and duplicate download avoidance.
+- **Themes & Layouts**: Responsive grid and masonry views, column controls (Auto, 3–8 cols), density modes (comfortable, compact, dense, extra-dense), and themes (Light, Dark, AMOLED Black, System).

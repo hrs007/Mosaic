@@ -1,0 +1,186 @@
+/* Media Queries & Responsive Overrides */
+@media (min-width: 1500px) {
+  .app-shell { padding: 0 42px; }
+  .gallery-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .app-shell { padding: 0 38px; }
+}
+
+@media (max-width: 760px) {
+  .app-shell { padding: 0 14px !important; }
+  .topbar { height: 54px; }
+  .compact-status { height: 23px; }
+  .toolbar-wrap { top: 54px; }
+  .toolbar {
+    height: auto;
+    min-height: 49px;
+    flex-wrap: wrap;
+    padding: 6px 0;
+  }
+  .tabs { height: 36px; gap: 16px; }
+  .toolbar-controls { width: 100%; padding-bottom: 3px; }
+  .searchbox { width: auto; flex: 1; }
+  .gallery-grid {
+    grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+    gap: 11px 9px;
+  }
+  .filter-panel { gap: 13px; }
+  .filter-checks { gap: 8px; }
+  footer { height: 35px; }
+}
+
+@media (max-width: 480px) {
+  .app-shell { padding: 0 10px !important; }
+  .topbar { gap: 12px; }
+  .top-context { max-width: 44%; font-size: 8px; }
+  .tabs { gap: 12px; }
+  .tab { font-size: 10px; }
+  .toolbar-controls { gap: 5px; }
+  .filter-button, .sort-button { padding: 0 7px; }
+  .sort-button { min-width: 104px; }
+  .gallery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 8px;
+  }
+  .media-thumb, .media-thumb.square { aspect-ratio: .95; }
+  .gallery-section { padding-top: 13px; }
+  .viewer-modal { padding: 0 29px !important; }
+  .viewer-info { left: 29px; right: 29px; }
+  .viewer-info small { font-size: 8px; }
+  footer span:first-child { display: none; }
+  footer span:last-child { margin-left: auto; }
+}
+
+/* Columns and Density Overrides */
+@media (min-width: 521px) {
+  html[data-columns="3"] .gallery-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  html[data-columns="4"] .gallery-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  html[data-columns="5"] .gallery-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  html[data-columns="6"] .gallery-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  html[data-columns="7"] .gallery-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  html[data-columns="8"] .gallery-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+}
+
+html[data-density="dense"] .gallery-grid,
+html[data-density="dense"] .masonry-col { gap: 8px 7px; }
+html[data-density="extra-dense"] .gallery-grid,
+html[data-density="extra-dense"] .masonry-col { gap: 4px; }
+html[data-density="dense"] .media-thumb { border-radius: 3px; }
+html[data-density="extra-dense"] .media-thumb { border-radius: 2px; }
+html[data-density="compact"] .card-info { padding-top: 4px; }
+html[data-density="dense"] .card-info,
+html[data-density="extra-dense"] .card-info { padding-top: 3px; }
+
+/* Dark Mode and AMOLED Overrides */
+html[data-theme="amoled"] body,
+html[data-theme="amoled"] .toolbar-wrap,
+html[data-theme="amoled"] .searchbox,
+html[data-theme="amoled"] .filter-button,
+html[data-theme="amoled"] .sort-button,
+html[data-theme="amoled"] .sort-menu,
+html[data-theme="amoled"] .settings-drawer,
+html[data-theme="amoled"] .setting-row select,
+html[data-theme="amoled"] .icon-button,
+html[data-theme="amoled"] .view-switch,
+html[data-theme="amoled"] .sort-menu button:hover {
+  background: #000;
+}
+
+html[data-theme="amoled"] .media-thumb { background: #090909; }
+html[data-theme="amoled"] .drawer-backdrop { background: #000d; }
+html[data-theme="amoled"] .setting-section h3,
+html[data-theme="amoled"] .filter-checks button { color: #bde5c8; }
+html[data-theme="amoled"] .tab.active:after { background: #bde5c8; }
+
+html[data-theme=dark] .size-chip,
+html[data-theme=dark] .orientation-chip,
+html[data-theme=dark] .autoplay-chip,
+html[data-theme=amoled] .size-chip,
+html[data-theme=amoled] .orientation-chip,
+html[data-theme=amoled] .autoplay-chip {
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: #9ea59e !important;
+  border-color: #2a2e2a !important;
+}
+
+html[data-theme=dark] .size-chip:hover,
+html[data-theme=dark] .orientation-chip:hover,
+html[data-theme=dark] .autoplay-chip:hover,
+html[data-theme=amoled] .size-chip:hover,
+html[data-theme=amoled] .orientation-chip:hover,
+html[data-theme=amoled] .autoplay-chip:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #f2f5f2 !important;
+  border-color: #3e453e !important;
+}
+
+html[data-theme=dark] .filter-panel {
+  background: #131513 !important;
+  border-top: 1px solid #232724 !important;
+  border-bottom: 1px solid #232724 !important;
+}
+
+html[data-theme=amoled] .filter-panel {
+  background: #000000 !important;
+  border-top: 1px solid #1c1c1c !important;
+  border-bottom: 1px solid #1c1c1c !important;
+}
+
+html[data-theme=dark] .settings-drawer {
+  background: #161816 !important;
+  border-left: 1px solid #272a27 !important;
+  color: #f0f0f0 !important;
+}
+
+html[data-theme=amoled] .settings-drawer {
+  background: #000000 !important;
+  border-left: 1px solid #1e1e1e !important;
+  color: #f5f5f5 !important;
+}
+
+html[data-theme=dark] .setting-row select,
+html[data-theme=amoled] .setting-row select {
+  background: #1c1f1c !important;
+  color: #f0f0f0 !important;
+  border: 1px solid #313632 !important;
+}
+
+html[data-theme=dark] .setting-row select option,
+html[data-theme=amoled] .setting-row select option {
+  background: #1a1c1a !important;
+  color: #ffffff !important;
+}
+
+html[data-theme=dark] .setting-badge,
+html[data-theme=amoled] .setting-badge {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: #d5dcd5 !important;
+}
+
+html[data-theme=dark] .sort-menu {
+  background: #181a18 !important;
+  border-color: #2d322e !important;
+  color: #f0f0f0 !important;
+}
+
+html[data-theme=amoled] .sort-menu {
+  background: #0a0a0a !important;
+  border-color: #222 !important;
+  color: #f0f0f0 !important;
+}
+
+html[data-theme=dark] .sort-menu button,
+html[data-theme=amoled] .sort-menu button {
+  color: #eee !important;
+}
+
+html[data-theme=dark] .sort-menu button:hover,
+html[data-theme=amoled] .sort-menu button:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}

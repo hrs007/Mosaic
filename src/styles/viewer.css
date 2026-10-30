@@ -1,0 +1,387 @@
+/* Pure Black Media Viewer Workspace */
+.modal-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  background: #000000 !important;
+  backdrop-filter: none !important;
+  z-index: 1000 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+}
+
+.viewer-modal {
+  position: relative !important;
+  background: #000000 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 14px 44px 14px !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+.viewer-media {
+  flex: 1 1 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+  background: #000000 !important;
+}
+
+.viewer-media img, .viewer-media video {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: #000000;
+}
+
+.viewer-media iframe {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  background: #000000;
+}
+
+.viewer-media.video-view {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  gap: 10px;
+}
+
+.viewer-video-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #000000;
+}
+
+.viewer-video-stage video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: #000000;
+  cursor: pointer;
+  transition: object-fit .2s ease;
+}
+
+.viewer-video-stage.mode-fill video, .viewer-video-stage video.video-fill {
+  object-fit: cover !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.viewer-video-stage.mode-fit video, .viewer-video-stage video.video-fit {
+  object-fit: contain !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+}
+
+.viewer-media.mode-fill img {
+  object-fit: cover !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.viewer-media.mode-fit img {
+  object-fit: contain !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+}
+
+/* Frosted Glass Video Controls */
+.viewer-controls {
+  position: relative;
+  z-index: 1005 !important;
+  width: min(900px, 100%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  min-height: 42px;
+  padding: 4px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(18, 20, 18, 0.92);
+  backdrop-filter: blur(16px);
+  color: #fff;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8);
+  flex-shrink: 0;
+  margin: 0 auto;
+}
+
+.viewer-controls input[type=range] {
+  flex: 1;
+  min-width: 80px;
+  accent-color: #82cca0;
+  cursor: pointer;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.viewer-clock {
+  min-width: 82px;
+  text-align: right;
+  color: rgba(255, 255, 255, 0.75);
+  font: 500 10.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.viewer-ctrl-btn {
+  height: 30px;
+  min-width: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  padding: 0 9px;
+  font: 500 11px var(--sans);
+  cursor: pointer;
+  transition: all .15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  user-select: none;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.viewer-ctrl-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.38);
+  color: #ffffff;
+}
+
+.viewer-ctrl-btn.active {
+  background: rgba(255, 255, 255, 0.26);
+  border-color: #ffffff;
+  color: #ffffff;
+}
+
+.viewer-ctrl-btn svg, .viewer-svg-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.viewer-close {
+  position: fixed !important;
+  z-index: 1010 !important;
+  top: 16px !important;
+  right: 18px !important;
+  width: 38px !important;
+  height: 38px !important;
+  display: grid !important;
+  place-items: center !important;
+  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  border-radius: 50% !important;
+  background: rgba(20, 22, 20, 0.85) !important;
+  color: #fff !important;
+  font-size: 22px !important;
+  line-height: 1 !important;
+  cursor: pointer !important;
+  backdrop-filter: blur(10px) !important;
+  transition: all .15s ease !important;
+}
+
+.viewer-close:hover {
+  background: rgba(50, 55, 50, 0.95) !important;
+  border-color: rgba(255, 255, 255, 0.5) !important;
+}
+
+.viewer-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  background: rgba(18, 20, 18, 0.75);
+  color: #fff;
+  font-size: 24px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  backdrop-filter: blur(8px);
+  transition: all .15s ease;
+  z-index: 12;
+}
+
+.viewer-nav:hover {
+  background: rgba(40, 44, 40, 0.95);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.viewer-prev { left: 14px; }
+.viewer-next { right: 14px; }
+
+.viewer-info {
+  position: relative;
+  width: 100%;
+  min-height: 38px;
+  padding-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  color: #fff;
+  font: 500 12px var(--sans);
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.viewer-info-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.viewer-info-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: #f3f3f3;
+  max-width: min(600px, 50vw);
+}
+
+.viewer-info-title small {
+  color: rgba(255, 255, 255, 0.65);
+  font: 400 10px var(--mono);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.viewer-info-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.viewer-info-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-radius: 5px;
+  padding: 7px 12px;
+  font: 500 11px var(--sans);
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.viewer-info-actions button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.viewer-info-actions button#viewerMore {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.viewer-action-menu {
+  z-index: 2200 !important;
+  min-width: 220px;
+  max-height: min(70vh, 440px);
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  background: #161816 !important;
+  color: #fff !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65) !important;
+}
+
+.viewer-action-menu button {
+  color: #f0f3f0 !important;
+  font-size: 11px !important;
+  padding: 9px 12px !important;
+}
+
+.viewer-action-menu button:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+.toast {
+  position: fixed;
+  z-index: 2500 !important;
+  bottom: 24px;
+  left: 50%;
+  transform: translate(-50%, 20px);
+  opacity: 0;
+  background: #24362a;
+  color: white;
+  padding: 12px 17px;
+  border-radius: 5px;
+  box-shadow: var(--shadow);
+  font: 11px var(--sans);
+  transition: .2s;
+  pointer-events: none;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+body.modal-open {
+  overflow: hidden;
+}
+

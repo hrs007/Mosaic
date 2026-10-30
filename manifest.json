@@ -1,16 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "Mosaic \u2014 Page Media Gallery",
+  "name": "Mosaic — Page Media Gallery",
   "version": "1.4.6",
   "description": "Collect, filter, and browse images and videos from the page you're viewing.",
   "permissions": [
     "activeTab",
+    "tabs",
     "scripting",
     "storage",
     "contextMenus",
     "downloads",
-    "downloads.open"
+    "downloads.open",
+    "declarativeNetRequest"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://www.dailymotion.com https://player.twitch.tv https://*.googlevideo.com;"
+  },
   "host_permissions": [
     "<all_urls>"
   ],
@@ -22,6 +27,22 @@
       "128": "icons/icon128.png"
     }
   },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+M",
+        "mac": "Alt+Shift+M"
+      }
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -34,8 +55,7 @@
     {
       "resources": [
         "gallery.html",
-        "gallery.js",
-        "styles.css",
+        "dist/*",
         "icons/*"
       ],
       "matches": [

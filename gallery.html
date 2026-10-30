@@ -1,40 +1,17 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>Mosaic — Page Media Gallery</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="dist/gallery.css">
 </head>
 <body>
-  <div class="app-shell">
-    <header class="topbar">
-      <a class="brand" href="#" aria-label="Mosaic home"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>mosaic</span></a>
-      <div class="top-context"><span class="live-dot"></span><span id="siteLabel">Scanning current page</span><span class="context-sep">/</span><span id="mediaCountTop">0 items</span></div>
-      <div class="top-actions"><button class="icon-button" id="themeToggle" title="Toggle theme" aria-label="Toggle theme">◐</button><button class="icon-button" id="settingsOpen" title="Settings" aria-label="Settings">⚙</button><button class="icon-button overlay-close" id="overlayClose" title="Close gallery" aria-label="Close gallery">×</button></div>
-    </header>
-    <main>
-      <div class="scan-status compact-status"><span class="status-dot"></span><span id="scanStatus">Ready to explore</span></div>
-      <section class="site-tools hidden" id="siteTools"><div class="site-profile"><span id="siteGlyph">◉</span><div><b id="siteName">Page tools</b><small id="siteHint">Site-aware media tools</small></div></div><div class="site-actions" id="siteActions"></div></section>
-      <section class="toolbar-wrap">
-        <div class="toolbar"><div class="tabs" role="tablist"><button class="tab active" data-type="all">Everything <span id="countAll">0</span></button><button class="tab" data-type="image">Images <span id="countImage">0</span></button><button class="tab" data-type="video">Videos <span id="countVideo">0</span></button><button class="tab" data-type="files">Library <span id="countSaved">0</span></button><button class="tab" data-type="favorites">Favorites <span id="countFavorites">0</span></button></div>
-          <div class="toolbar-controls"><label class="searchbox"><span>⌕</span><input id="searchInput" placeholder="Search media…" autocomplete="off"><kbd>⌘ K</kbd></label><button class="filter-button" id="filterToggle">☷ <span>Filters</span><b id="filterIndicator"></b></button><div class="sort-wrap"><button class="sort-button" id="sortButton">↕ <span id="sortLabel">Oldest → newest</span><span class="chevron">⌄</span></button><div class="sort-menu hidden" id="sortMenu"><button data-sort="largest">Largest first</button><button data-sort="smallest">Smallest first</button><button data-sort="newest">Oldest → newest</button><button data-sort="name">Name A–Z</button></div></div></div>
-        </div>
-        <div class="filter-panel hidden" id="filterPanel"><div class="filter-group"><span class="filter-title">MINIMUM SIZE</span><div class="size-options"><button class="size-chip active" data-size="0">Any</button><button class="size-chip" data-size="100">100 KB+</button><button class="size-chip" data-size="500">500 KB+</button><button class="size-chip" data-size="1000">1 MB+</button></div></div><div class="filter-group"><span class="filter-title">ORIENTATION</span><div class="size-options"><button class="orientation-chip active" data-orientation="any">Any</button><button class="orientation-chip" data-orientation="landscape">Landscape</button><button class="orientation-chip" data-orientation="portrait">Portrait</button><button class="orientation-chip" data-orientation="square">Square</button></div></div><div class="filter-group filter-checks"><label><input type="checkbox" id="hideSmall"> Hide tiny images (&lt; 120px)</label><label><input type="checkbox" id="hideDuplicates"> Hide duplicates</label><button id="clearFilters">Clear all</button></div></div>
-      </section>
-      <section class="gallery-section"><div class="gallery-heading"><div><h2 id="galleryTitle">All media <span id="visibleCount">0</span></h2><p id="gallerySubtitle">A little visual inspiration from this page.</p></div><div class="view-switch"><button class="view-button active" data-view="grid" title="Grid view">▦</button><button class="view-button" data-view="masonry" title="Masonry view">▤</button></div></div>
-        <div id="gallery" class="gallery-grid"></div>
-        <div id="emptyState" class="empty-state hidden"><div class="empty-icon">⌕</div><h3>No media found here</h3><p>Try another filter or scan this page again.</p><button class="primary-button" id="rescanEmpty">↻ &nbsp; Scan page</button></div>
-        <div id="loadingState" class="loading-state"><span class="spinner"></span> Gathering the visuals…</div>
-        <div class="load-more-wrap hidden" id="loadMoreWrap"><button class="secondary-button" id="loadMore">Load more media</button><span id="loadMoreLabel"></span></div>
-      </section>
-    </main>
-    <footer><span>Made for the curious eye <b>✳</b></span><span>Media stays on your device · <button id="privacyLink">Privacy & controls</button></span></footer>
-  </div>
-  <div class="drawer-backdrop hidden" id="drawerBackdrop"></div>
-  <aside class="settings-drawer" id="settingsDrawer" aria-hidden="true"><div class="drawer-head"><div><div class="eyebrow">YOUR MOSAIC</div><h2>Settings</h2></div><button class="icon-button" id="settingsClose">×</button></div><p class="drawer-intro">Make Mosaic feel like yours.</p><div class="setting-section"><h3>Gallery</h3><label class="setting-row"><span><b>Show image dimensions</b><small>Display width × height on cards</small></span><input type="checkbox" id="settingDimensions"></label><label class="setting-row"><span><b>Show file sizes</b><small>Display estimated size when available</small></span><input type="checkbox" id="settingSizes"></label><label class="setting-row"><span><b>Open links in new tab</b><small>Keep this gallery right where it is</small></span><input type="checkbox" id="settingNewTab"></label><label class="setting-row"><span><b>Include background images</b><small>Scan CSS backgrounds, too</small></span><input type="checkbox" id="settingBackgrounds"></label></div><div class="setting-section"><h3>Playback</h3><label class="setting-row"><span><b>Autoplay opened videos</b><small>Start playback when a video viewer opens</small></span><input type="checkbox" id="settingAutoplay"></label></div><div class="setting-section"><h3>Appearance</h3><div class="setting-row"><span><b>Gallery density</b><small>Choose your card size</small></span><select id="settingDensity"><option value="comfortable">Comfortable</option><option value="compact">Compact</option><option value="dense">Dense</option><option value="extra-dense">Extra dense</option></select></div><div class="setting-row"><span><b>Columns</b><small>Set the number of gallery columns</small></span><select id="settingColumns"><option value="auto">Automatic</option><option value="3">3 columns</option><option value="4">4 columns</option><option value="5">5 columns</option><option value="6">6 columns</option><option value="7">7 columns</option><option value="8">8 columns</option></select></div><div class="setting-row"><span><b>Theme</b><small>Light, dark, or true black</small></span><select id="settingTheme"><option value="light">Light</option><option value="dark">Dark</option><option value="amoled">AMOLED black</option><option value="system">System</option></select></div></div><div class="setting-section"><h3>On this page</h3><div class="setting-row"><span><b>Clear saved favorites</b><small>Remove favorites stored on this device</small></span><button class="text-button" id="clearFavorites">Clear</button></div><div class="setting-row"><span><b>Clear Mosaic library</b><small>Remove items from Mosaic; downloaded files stay in Downloads / Mosaic</small></span><button class="text-button" id="clearLibrary">Clear</button></div><div class="setting-row"><span><b>Scan page again</b><small>Find media added since your last scan</small></span><button class="text-button" id="rescanButton">Scan ↗</button></div></div><div class="drawer-footer">Mosaic <span>v1.4.6 · Saved in Downloads / Mosaic</span></div></aside>
-  <div class="modal-backdrop hidden" id="viewerBackdrop"><button class="viewer-close" id="viewerClose" type="button" aria-label="Close viewer" title="Close viewer">×</button><div class="viewer-modal" role="dialog" aria-modal="true"><button class="viewer-nav viewer-prev" id="viewerPrev">‹</button><div class="viewer-media" id="viewerMedia"></div><button class="viewer-nav viewer-next" id="viewerNext">›</button><div class="viewer-info" id="viewerInfo"></div></div></div>
-  <div class="toast" id="toast"></div>
-  <script src="gallery.js"></script>
-</body></html>
+  <div id="root"></div>
+  <script type="module" src="dist/gallery.js"></script>
+</body>
+</html>
