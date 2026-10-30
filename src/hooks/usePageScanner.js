@@ -4,7 +4,8 @@ import {
   canonicalMediaId,
   getRedditPostId,
   parseRedditResolution,
-  pageIdentity
+  pageIdentity,
+  isDisallowedMediaUrl
 } from '../utils/mediaHelpers.js';
 import { resolveXVideos } from '../utils/xSyndication.js';
 import {
@@ -48,6 +49,7 @@ export function usePageScanner({
   const lastSourceAdvanceRef = useRef(0);
   const hasReachedEndRef = useRef(false);
   hasReachedEndRef.current = hasReachedEnd;
+  const lastScrollHeightRef = useRef(0);
 
   const mediaRef = useRef(media);
   mediaRef.current = media;
@@ -59,119 +61,224 @@ export function usePageScanner({
     let addedCount = 0;
 
     setMedia(prevMedia => {
-      const known = new Map(prevMedia.map(item => [item.id || canonicalMediaId(item.url, item), item]));
+      const idToIndex = new Map();
+      const redditPostToIndex = new Map();
+      const xPostToIndex = new Map();
+
+      const copyRichMeta = (target, source) => {
+        if (source.subreddit && !target.subreddit) target.subreddit = source.subreddit;
+        if (source.author && !target.author) target.author = source.author;
+        if (source.score && !target.score) target.score = source.score;
+        if (source.commentCount && !target.commentCount) target.commentCount = source.commentCount;
+        if (source.tweetText && !target.tweetText) target.tweetText = source.tweetText;
+        if (source.authorName && !target.authorName) target.authorName = source.authorName;
+        if (source.authorHandle && !target.authorHandle) target.authorHandle = source.authorHandle;
+        if (source.likes && !target.likes) target.likes = source.likes;
+        if (source.replies && !target.replies) target.replies = source.replies;
+        if (source.isEmbed != null) target.isEmbed = Boolean(source.isEmbed);
+        if (source.isGif != null) target.isGif = Boolean(source.isGif);
+        if (source.provider && !target.provider) target.provider = source.provider;
+        if (source.playbackPage && !target.playbackPage) target.playbackPage = source.playbackPage;
+        if (Array.isArray(source.videoVariants) && source.videoVariants.length) {
+          if (!target.videoVariants || source.videoVariants.length > target.videoVariants.length) {
+            target.videoVariants = source.videoVariants;
+          }
+        }
+        if (source.galleryTotal && !target.galleryTotal) target.galleryTotal = source.galleryTotal;
+        if (source.galleryIndex != null && target.galleryIndex == null) target.galleryIndex = source.galleryIndex;
+        if (source.blogName && !target.blogName) target.blogName = source.blogName;
+        if (source.rebloggedFrom && !target.rebloggedFrom) target.rebloggedFrom = source.rebloggedFrom;
+        if (Array.isArray(source.tags) && source.tags.length && (!target.tags || !target.tags.length)) target.tags = source.tags;
+        if (source.caption && !target.caption) target.caption = source.caption;
+      };
+
+      for (let i = 0; i < prevMedia.length; i++) {
+        const m = prevMedia[i];
+        const mid = m.id || canonicalMediaId(m.url, m);
+        idToIndex.set(mid, i);
+
+        if (m.site === 'reddit') {
+          const isGal = m.isGallery || m.postType === 'gallery' || m.galleryIndex != null;
+          if (!isGal) {
+            const pId = m.postId ? String(m.postId).replace(/^t3_/, '').toLowerCase() : getRedditPostId(m.postUrl || m.url);
+            if (pId) {
+              redditPostToIndex.set(pId, i);
+            }
+          }
+        } else if (m.site === 'x') {
+          const xMediaId = (m.poster || m.source || m.url || '').match(/(?:amplify_video_thumb|ext_tw_video_thumb|tweet_video_thumb|amplify_video|ext_tw_video|tweet_video)\/(\d+)/i)?.[1];
+          if (xMediaId) xPostToIndex.set(`mid:${xMediaId}`, i);
+          if (m.postUrl) xPostToIndex.set(`purl:${m.postUrl}`, i);
+        }
+      }
+
       const nextMedia = [...prevMedia];
       let changed = false;
 
       for (const x of items) {
-        if (!x?.url) continue;
+        if (!x?.url || isDisallowedMediaUrl(x.url)) continue;
         const id = canonicalMediaId(String(x.url), x);
-        const old = known.get(id);
+        if (!id) continue;
 
-        // Check if there's an existing placeholder image for Reddit video from same post
-        if (x.site === 'reddit' && x.type === 'video' && x.postUrl) {
-          const pId = getRedditPostId(x.postUrl);
-          if (pId) {
-            const imgIndex = nextMedia.findIndex(m => m.site === 'reddit' && m.type === 'image' && getRedditPostId(m.postUrl) === pId);
-            if (imgIndex !== -1) {
-              const oldImg = { ...nextMedia[imgIndex] };
-              oldImg.type = 'video';
-              oldImg.url = x.url;
-              oldImg.source = x.source || x.url;
-              oldImg.fallbackUrls = x.fallbackUrls || [];
-              oldImg.poster = x.poster || oldImg.previewUrl || oldImg.url;
-              oldImg.width = Math.max(oldImg.width || 0, Number(x.width) || 0);
-              oldImg.height = Math.max(oldImg.height || 0, Number(x.height) || 0);
-              oldImg.playbackPage = x.playbackPage || '';
-              oldImg.unavailable = false;
-              nextMedia[imgIndex] = oldImg;
-              known.set(id, oldImg);
+        // Check Reddit post-level deduplication and video upgrading
+        if (x.site === 'reddit') {
+          const isGal = x.isGallery || x.postType === 'gallery' || x.galleryIndex != null;
+          if (!isGal) {
+            const pId = x.postId ? String(x.postId).replace(/^t3_/, '').toLowerCase() : getRedditPostId(x.postUrl || x.url);
+            if (pId && redditPostToIndex.has(pId)) {
+              const existingIdx = redditPostToIndex.get(pId);
+              const existing = nextMedia[existingIdx];
+
+              // 1. If an image arrives for a Reddit post where we already have a video, skip duplicate
+              if (x.type === 'image' && existing.type === 'video') {
+                continue;
+              }
+
+              // 2. If a video arrives and existing is an image, upgrade existing in place
+              if (x.type === 'video' && existing.type !== 'video') {
+                const upgraded = { ...existing };
+                upgraded.type = 'video';
+                upgraded.url = x.url;
+                upgraded.source = x.source || x.url;
+                upgraded.fallbackUrls = x.fallbackUrls || [];
+                upgraded.poster = x.poster || existing.previewUrl || existing.url;
+                upgraded.width = Math.max(existing.width || 0, Number(x.width) || 0);
+                upgraded.height = Math.max(existing.height || 0, Number(x.height) || 0);
+                upgraded.playbackPage = x.playbackPage || '';
+                upgraded.unavailable = false;
+                upgraded.id = id;
+                copyRichMeta(upgraded, x);
+                nextMedia[existingIdx] = upgraded;
+                idToIndex.set(id, existingIdx);
+                changed = true;
+                continue;
+              }
+
+              // 3. If both are videos, update resolution if higher
+              if (x.type === 'video' && existing.type === 'video') {
+                const oldRes = parseRedditResolution(existing.url);
+                const newRes = parseRedditResolution(x.url);
+                if (newRes > oldRes) {
+                  const updated = { ...existing };
+                  updated.url = x.url;
+                  updated.source = x.source || x.url;
+                  if (x.fallbackUrls?.length) {
+                    updated.fallbackUrls = [...new Set([...(updated.fallbackUrls || []), ...x.fallbackUrls])].sort((a, b) => parseRedditResolution(b) - parseRedditResolution(a));
+                  }
+                  copyRichMeta(updated, x);
+                  nextMedia[existingIdx] = updated;
+                  changed = true;
+                } else {
+                  copyRichMeta(existing, x);
+                }
+                continue;
+              }
+
+              // 4. If both are images, skip duplicate
+              if (x.type === 'image' && existing.type === 'image') {
+                copyRichMeta(existing, x);
+                continue;
+              }
+            }
+          }
+        }
+
+        // Check X post fallback
+        if (x.site === 'x' && x.type === 'video' && !x.playbackPage && x.postUrl) {
+          const xMediaId = (x.poster || x.source || x.url || '').match(/(?:amplify_video_thumb|ext_tw_video_thumb|tweet_video_thumb|amplify_video|ext_tw_video|tweet_video)\/(\d+)/i)?.[1];
+          const fallbackIdx = (xMediaId && xPostToIndex.has(`mid:${xMediaId}`))
+            ? xPostToIndex.get(`mid:${xMediaId}`)
+            : (x.postUrl && xPostToIndex.has(`purl:${x.postUrl}`))
+            ? xPostToIndex.get(`purl:${x.postUrl}`)
+            : -1;
+
+          if (fallbackIdx !== -1) {
+            const fallback = { ...nextMedia[fallbackIdx] };
+            if (fallback.site === 'x' && fallback.type === 'video' && fallback.playbackPage) {
+              fallback.url = x.url;
+              fallback.source = x.source || x.url;
+              fallback.fallbackUrls = x.fallbackUrls || fallback.fallbackUrls || [];
+              fallback.playbackPage = '';
+              fallback.poster = x.poster || fallback.poster || '';
+              fallback.width = Math.max(fallback.width || 0, Number(x.width) || 0);
+              fallback.height = Math.max(fallback.height || 0, Number(x.height) || 0);
+              fallback.duration = x.duration || fallback.duration || 0;
+              copyRichMeta(fallback, x);
+              nextMedia[fallbackIdx] = fallback;
+              idToIndex.set(id, fallbackIdx);
               changed = true;
               continue;
             }
           }
         }
 
-        // If an image arrives for a Reddit post where we already have a video, skip duplicate
-        if (x.site === 'reddit' && x.type === 'image' && x.postUrl) {
-          const pId = getRedditPostId(x.postUrl);
-          if (pId && nextMedia.some(m => m.site === 'reddit' && m.type === 'video' && getRedditPostId(m.postUrl) === pId)) {
-            continue;
-          }
-        }
-
-        if (!old && x.site === 'x' && x.type === 'video' && !x.playbackPage && x.postUrl) {
-          const fallbackIdx = nextMedia.findIndex(item => item.site === 'x' && item.type === 'video' && item.playbackPage && item.postUrl === x.postUrl);
-          if (fallbackIdx !== -1) {
-            const fallback = { ...nextMedia[fallbackIdx] };
-            fallback.url = x.url;
-            fallback.source = x.source || x.url;
-            fallback.fallbackUrls = x.fallbackUrls || fallback.fallbackUrls || [];
-            fallback.playbackPage = '';
-            fallback.poster = fallback.poster || x.poster || '';
-            fallback.width = Math.max(fallback.width || 0, Number(x.width) || 0);
-            fallback.height = Math.max(fallback.height || 0, Number(x.height) || 0);
-            nextMedia[fallbackIdx] = fallback;
-            known.set(id, fallback);
+        if (idToIndex.has(id)) {
+          const idx = idToIndex.get(id);
+          const updated = { ...nextMedia[idx] };
+          copyRichMeta(updated, x);
+          const w = Math.max(updated.width || 0, Number(x.width) || 0);
+          const h = Math.max(updated.height || 0, Number(x.height) || 0);
+          if (w !== updated.width || h !== updated.height) {
+            updated.width = w;
+            updated.height = h;
             changed = true;
-            continue;
           }
-        }
-
-        if (old) {
-          const idx = nextMedia.findIndex(m => m.id === old.id);
-          if (idx !== -1) {
-            const updated = { ...nextMedia[idx] };
-            const w = Math.max(updated.width || 0, Number(x.width) || 0);
-            const h = Math.max(updated.height || 0, Number(x.height) || 0);
-            if (w !== updated.width || h !== updated.height) {
-              updated.width = w;
-              updated.height = h;
-              changed = true;
-            }
-            if (!updated.alt && x.alt) updated.alt = x.alt;
-            if (!updated.previewUrl && x.previewUrl) updated.previewUrl = x.previewUrl;
-            if (x.type === 'video' && updated.type !== 'video') {
-              updated.type = 'video';
-              updated.poster = updated.poster || x.poster || x.previewUrl || '';
-              updated.playbackPage = updated.playbackPage || x.playbackPage || '';
-              updated.postUrl = updated.postUrl || x.postUrl || '';
-              updated.site = updated.site || x.site || '';
-              updated.unavailable = false;
-              changed = true;
-            }
-            if (x.type === 'video') {
-              if (x.site === 'reddit') {
-                const oldRes = parseRedditResolution(updated.url);
-                const newRes = parseRedditResolution(x.url);
-                if (newRes > oldRes) {
-                  updated.url = x.url;
-                  updated.source = x.source || x.url;
-                  changed = true;
-                }
-                if (x.fallbackUrls?.length) {
-                  updated.fallbackUrls = [...new Set([...(updated.fallbackUrls || []), ...x.fallbackUrls])].sort((a, b) => parseRedditResolution(b) - parseRedditResolution(a));
-                }
-                if (x.poster && !updated.poster) {
-                  updated.poster = x.poster;
-                  changed = true;
-                }
-                updated.unavailable = false;
-              } else if (x.site === 'x' && x.url !== updated.url && !x.playbackPage) {
+          if (x.duration && !updated.duration) {
+            updated.duration = x.duration;
+            changed = true;
+          }
+          if ((!updated.alt || updated.alt === 'YouTube Video') && x.alt && x.alt !== 'YouTube Video') {
+            updated.alt = x.alt;
+            changed = true;
+          }
+          if ((!updated.poster || updated.poster.includes('hqdefault.jpg')) && x.poster && !x.poster.includes('hqdefault.jpg')) {
+            updated.poster = x.poster;
+            changed = true;
+          }
+          if (!updated.previewUrl && x.previewUrl) updated.previewUrl = x.previewUrl;
+          if (x.type === 'video' && updated.type !== 'video') {
+            updated.type = 'video';
+            updated.poster = updated.poster || x.poster || x.previewUrl || '';
+            updated.playbackPage = updated.playbackPage || x.playbackPage || '';
+            updated.isEmbed = updated.isEmbed || x.isEmbed || false;
+            updated.isGif = updated.isGif || x.isGif || false;
+            updated.provider = updated.provider || x.provider || '';
+            updated.postUrl = updated.postUrl || x.postUrl || '';
+            updated.site = updated.site || x.site || '';
+            updated.unavailable = false;
+            changed = true;
+          }
+          if (x.type === 'video') {
+            if (x.site === 'reddit') {
+              const oldRes = parseRedditResolution(updated.url);
+              const newRes = parseRedditResolution(x.url);
+              if (newRes > oldRes) {
                 updated.url = x.url;
                 updated.source = x.source || x.url;
-                updated.fallbackUrls = x.fallbackUrls || updated.fallbackUrls || [];
-                updated.playbackPage = '';
-                updated.unavailable = false;
                 changed = true;
-              } else {
-                updated.fallbackUrls = x.fallbackUrls || updated.fallbackUrls || [];
-                updated.poster = updated.poster || x.poster || '';
-                updated.unavailable = false;
               }
+              if (x.fallbackUrls?.length) {
+                updated.fallbackUrls = [...new Set([...(updated.fallbackUrls || []), ...x.fallbackUrls])].sort((a, b) => parseRedditResolution(b) - parseRedditResolution(a));
+              }
+              if (x.poster && !updated.poster) {
+                updated.poster = x.poster;
+                changed = true;
+              }
+              updated.unavailable = false;
+            } else if (x.site === 'x' && x.url !== updated.url && !x.playbackPage) {
+              updated.url = x.url;
+              updated.source = x.source || x.url;
+              updated.fallbackUrls = x.fallbackUrls || updated.fallbackUrls || [];
+              updated.playbackPage = '';
+              updated.unavailable = false;
+              changed = true;
+            } else {
+              updated.fallbackUrls = x.fallbackUrls || updated.fallbackUrls || [];
+              updated.poster = updated.poster || x.poster || '';
+              updated.unavailable = false;
             }
-            nextMedia[idx] = updated;
           }
+          nextMedia[idx] = updated;
           continue;
         }
 
@@ -183,8 +290,16 @@ export function usePageScanner({
           width: Number(x.width) || (x.site === 'youtube' ? 1280 : 0),
           height: Number(x.height) || (x.site === 'youtube' ? 720 : 0)
         };
+        const newIdx = nextMedia.length;
         nextMedia.push(item);
-        known.set(id, item);
+        idToIndex.set(id, newIdx);
+        if (item.site === 'reddit') {
+          const isGal = item.isGallery || item.postType === 'gallery' || item.galleryIndex != null;
+          if (!isGal) {
+            const pId = item.postId ? String(item.postId).replace(/^t3_/, '').toLowerCase() : getRedditPostId(item.postUrl || item.url);
+            if (pId) redditPostToIndex.set(pId, newIdx);
+          }
+        }
         addedCount++;
         changed = true;
       }
@@ -230,12 +345,15 @@ export function usePageScanner({
         const hasYt = items.some(x => x.site === 'youtube');
         const hasX = items.some(x => x.site === 'x');
         const hasReddit = items.some(x => x.site === 'reddit');
+        const hasTumblr = items.some(x => x.site === 'tumblr');
         if (hasYt) {
           setSiteProfile({ key: 'youtube', name: 'YouTube', glyph: '▶', hint: 'Watch videos · shorts · embedded players' });
         } else if (hasX) {
           setSiteProfile({ key: 'x', name: 'X', glyph: '𝕏', hint: 'Loaded posts · playable clips · originals' });
         } else if (hasReddit) {
           setSiteProfile({ key: 'reddit', name: 'Reddit', glyph: 'r', hint: 'Post images · hosted videos · discussions' });
+        } else if (hasTumblr) {
+          setSiteProfile({ key: 'tumblr', name: 'Tumblr', glyph: 't', hint: 'Photosets · GIFs · original sizes · posts' });
         }
       }
     } catch {} finally {
@@ -248,15 +366,21 @@ export function usePageScanner({
   }, [tabId, mergeMedia]);
 
   // Advance Source Page (Infinite Scroll in Background)
-  const advanceSourcePage = useCallback(async () => {
+  const advanceSourcePage = useCallback(async (force = false) => {
     if (
       !tabId ||
       !isExtensionValid() ||
       sourceAdvanceBusyRef.current ||
-      sourceAdvancePausedRef.current ||
-      hasReachedEndRef.current ||
       Date.now() - lastSourceAdvanceRef.current < 350
     ) return;
+
+    if (!force && (sourceAdvancePausedRef.current || hasReachedEndRef.current)) return;
+
+    if (force) {
+      sourceAdvancePausedRef.current = false;
+      hasReachedEndRef.current = false;
+      setHasReachedEnd(false);
+    }
 
     sourceAdvanceBusyRef.current = true;
     setIsAdvancing(true);
@@ -276,22 +400,32 @@ export function usePageScanner({
         });
         const scrollInfo = res?.result;
         steps++;
-        await new Promise(resolve => setTimeout(resolve, 400));
+
+        // Give the tab time to trigger infinite scroll network request and DOM mutation
+        await new Promise(resolve => setTimeout(resolve, 650));
         await scanLiveNow();
-        const noNewMedia = mediaRef.current.length === beforeCount;
-        if (noNewMedia) {
+
+        const gotNewMedia = mediaRef.current.length > beforeCount;
+        const scrollHeight = scrollInfo?.scrollHeight || 0;
+        const heightGrew = scrollHeight > (lastScrollHeightRef.current + 50);
+        if (scrollHeight > 0) lastScrollHeightRef.current = scrollHeight;
+
+        if (gotNewMedia || heightGrew) {
+          consecutiveEmptyAdvancesRef.current = 0;
+          sourceAdvancePausedRef.current = false;
+          setHasReachedEnd(false);
+          hasReachedEndRef.current = false;
+        } else {
           consecutiveEmptyAdvancesRef.current++;
-          if (scrollInfo?.atBottom || consecutiveEmptyAdvancesRef.current >= 3) {
+          // Declare reached end when the page cannot scroll further / is at bottom
+          // and no new media was added after consecutive verification steps
+          const cannotScrollFurther = !scrollInfo?.scrolled || scrollInfo?.atBottom;
+          if (cannotScrollFurther && consecutiveEmptyAdvancesRef.current >= 2) {
             sourceAdvancePausedRef.current = true;
             setHasReachedEnd(true);
             hasReachedEndRef.current = true;
             break;
           }
-        } else {
-          consecutiveEmptyAdvancesRef.current = 0;
-          sourceAdvancePausedRef.current = false;
-          setHasReachedEnd(false);
-          hasReachedEndRef.current = false;
         }
       }
     } catch {} finally {
@@ -310,8 +444,8 @@ export function usePageScanner({
       ? scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight)
       : 0;
 
-    // 1. Auto-advance the gallery visible page beforehand when within 1500px of bottom or not scrollable
-    if (!isScrollable || remainingScroll < 1500) {
+    // 1. Auto-advance the gallery visible page beforehand when not scrollable or when approaching the bottom
+    if (!isScrollable || (remainingScroll < 800 && scroller.scrollTop > 50)) {
       setPage(prevPage => {
         if (prevPage * perPage < filteredLengthRef.current) {
           return prevPage + 1;
@@ -422,23 +556,41 @@ export function usePageScanner({
     let port = null;
     let reconnectTimer = null;
     let isDisposed = false;
+    let liveBatch = [];
+    let liveBatchTimer = null;
+
+    const flushLiveBatch = async () => {
+      if (liveBatchTimer) {
+        clearTimeout(liveBatchTimer);
+        liveBatchTimer = null;
+      }
+      if (!liveBatch.length || isDisposed) return;
+      const items = liveBatch;
+      liveBatch = [];
+
+      const xItems = items.filter(item => item.site === 'x' && item.type === 'video');
+      if (xItems.length) {
+        try { await resolveXVideos(xItems); } catch {}
+      }
+      mergeMedia(items);
+    };
 
     const connectLivePort = () => {
       if (isDisposed || !isExtensionValid()) return;
       try {
         port = chrome.runtime.connect({ name: `mosaic-gallery:${tabId}` });
-        port.onMessage.addListener(async (message) => {
+        port.onMessage.addListener((message) => {
           if (isDisposed) return;
           if (message?.source === 'mosaic-live' && message.tabId === tabId && message.media) {
             const item = message.media;
-            if (!item.pageUrl) return;
+            if (!item.pageUrl || !item.url || isDisallowedMediaUrl(item.url)) return;
             const identity = pageIdentity(item.pageUrl);
             if (!currentPageIdentityRef.current) currentPageIdentityRef.current = identity;
             if (currentPageIdentityRef.current && identity !== currentPageIdentityRef.current) return;
-            if (item.site === 'x' && item.type === 'video') await resolveXVideos([item]);
-            mergeMedia([item]);
-            setHasReachedEnd(false);
-            hasReachedEndRef.current = false;
+            liveBatch.push(item);
+            if (!liveBatchTimer) {
+              liveBatchTimer = setTimeout(flushLiveBatch, 80);
+            }
           }
         });
         port.onDisconnect.addListener(() => {
@@ -467,6 +619,7 @@ export function usePageScanner({
     return () => {
       isDisposed = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (liveBatchTimer) clearTimeout(liveBatchTimer);
       clearInterval(pollInterval);
       if (port) {
         try { port.disconnect(); } catch {}
@@ -475,10 +628,6 @@ export function usePageScanner({
   }, [tabId, scanLiveNow, scanPage, mergeMedia, checkGalleryFill]);
 
   const handleGalleryScroll = useCallback(() => {
-    if (!hasReachedEndRef.current) {
-      sourceAdvancePausedRef.current = false;
-      consecutiveEmptyAdvancesRef.current = 0;
-    }
     checkGalleryFill();
   }, [checkGalleryFill]);
 

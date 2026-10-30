@@ -37,6 +37,13 @@ export default function SavedTools() {
           Saved images
         </button>
         <button
+          className={`site-action ${savedFilter === 'gif' ? 'active' : ''}`}
+          data-saved-filter="gif"
+          onClick={() => handleSavedFilter('gif')}
+        >
+          Saved GIFs
+        </button>
+        <button
           className={`site-action ${savedFilter === 'video' ? 'active' : ''}`}
           data-saved-filter="video"
           onClick={() => handleSavedFilter('video')}

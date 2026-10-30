@@ -9,6 +9,7 @@ export default function LoadMore() {
     perPage,
     advanceSourcePage,
     isAdvancing,
+    loading,
     hasReachedEnd,
     activeType
   } = useGallery();
@@ -29,7 +30,7 @@ export default function LoadMore() {
         const [entry] = entries;
         if (entry.isIntersecting) {
           const now = Date.now();
-          if (now - lastAdvanceTimeRef.current < 200) return;
+          if (now - lastAdvanceTimeRef.current < 250) return;
           lastAdvanceTimeRef.current = now;
 
           // Auto-load next batch of media beforehand if remaining
@@ -37,7 +38,7 @@ export default function LoadMore() {
             setPage(p => p + 1);
           }
 
-          // Auto-advance the source page in tab beforehand only if not yet reached end
+          // Auto-advance the source page in tab beforehand (only if not already reached end)
           if (isPageMedia && !hasReachedEnd) {
             advanceSourcePage();
           }
@@ -45,7 +46,7 @@ export default function LoadMore() {
       },
       {
         root: scroller,
-        rootMargin: '1200px 0px 1200px 0px',
+        rootMargin: '1000px 0px 1000px 0px',
         threshold: 0
       }
     );
@@ -57,10 +58,8 @@ export default function LoadMore() {
   // If there are no items in current filter, don't show anything (EmptyState will handle)
   if (!filtered.length) return null;
 
-  // When all items in the gallery are visible and the page reached the end (or in favorites/files), render nothing!
-  if (remain <= 0 && (!isPageMedia || hasReachedEnd)) {
-    return null;
-  }
+  // Show end indicator when all filtered items are rendered and page end is confirmed
+  const showEndIndicator = remain <= 0 && (!isPageMedia || hasReachedEnd);
 
   return (
     <div
@@ -69,7 +68,24 @@ export default function LoadMore() {
       id="loadMoreWrap"
       aria-live="polite"
     >
-      {isAdvancing && !hasReachedEnd ? (
+      {showEndIndicator ? (
+        <div className="gallery-end-indicator" id="galleryEndIndicator" role="status">
+          <div className="gallery-end-divider" />
+          <div
+            className="gallery-end-badge"
+            role="button"
+            tabIndex={0}
+            title="Click to check for more media"
+            onClick={() => {
+              if (isPageMedia) advanceSourcePage(true);
+            }}
+          >
+            <span className="gallery-end-icon" aria-hidden="true">✓</span>
+            <span className="gallery-end-title">End of page reached</span>
+            <span className="gallery-end-count">• {filtered.length} {filtered.length === 1 ? 'item' : 'items'} found</span>
+          </div>
+        </div>
+      ) : (isAdvancing || loading) ? (
         <>
           <span className="spinner"></span>
           <span>Loading more media…</span>

@@ -17,6 +17,7 @@ export default function GalleryHeading() {
 
   const titlePrefix = activeType === 'all' ? 'All media'
     : activeType === 'image' ? 'Images'
+    : activeType === 'gif' ? 'GIFs'
     : activeType === 'video' ? 'Videos'
     : activeType === 'files' ? 'Saved media'
     : 'Favorites';
@@ -24,6 +25,7 @@ export default function GalleryHeading() {
   const subtitle = filtered.length
     ? (activeType === 'favorites' ? 'Your saved favorites.'
       : activeType === 'files' ? 'Stored locally on this device in Downloads / Mosaic.'
+      : activeType === 'gif' ? 'Animated GIFs and looping clips discovered on this page.'
       : 'A little visual inspiration from this page.')
     : 'Nothing matches your current filters.';
 

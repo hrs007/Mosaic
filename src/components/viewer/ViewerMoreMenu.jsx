@@ -22,8 +22,8 @@ export default function ViewerMoreMenu({
       style={{
         position: 'fixed',
         zIndex: 2200,
-        left: `${Math.min(moreMenuRect.right - 230, window.innerWidth - 238)}px`,
-        top: `${Math.max(8, moreMenuRect.top - 200)}px`
+        left: `${Math.min((moreMenuRect?.right || 0) - 230, window.innerWidth - 238)}px`,
+        top: `${Math.max(8, (moreMenuRect?.top || 0) - 200)}px`
       }}
     >
       {isDirectValid && (
@@ -54,6 +54,9 @@ export default function ViewerMoreMenu({
         <>
           <button onClick={() => onReverseSearch('lens', directUrl)}>
             Search with Google Lens
+          </button>
+          <button onClick={() => onReverseSearch('yandex', directUrl)}>
+            Search with Yandex Images
           </button>
           <button onClick={() => onReverseSearch('bing', directUrl)}>
             Search with Bing Visual Search

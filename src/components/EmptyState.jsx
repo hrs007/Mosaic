@@ -40,11 +40,12 @@ export default function EmptyState() {
   }
 
   if (hasAnyAvailableMedia) {
+    const isGifOnly = activeType === 'gif';
     return (
       <div id="emptyState" className="empty-state">
         <div className="empty-icon">⌕</div>
-        <h3>No media matches these filters</h3>
-        <p>Clear the search or filters to see everything found on this page.</p>
+        <h3>{isGifOnly ? 'No GIFs found on this page' : 'No media matches these filters'}</h3>
+        <p>{isGifOnly ? 'No animated GIFs or looping clips were discovered. Browse images or all media.' : 'Clear the search or filters to see everything found on this page.'}</p>
         <button
           className="primary-button"
           id="rescanEmpty"
@@ -62,7 +63,7 @@ export default function EmptyState() {
             });
           }}
         >
-          Clear filters
+          {isGifOnly ? 'Browse all media' : 'Clear filters'}
         </button>
       </div>
     );

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { isItemGif } from '../utils/mediaHelpers.js';
+import { isItemGif, isDisallowedMediaUrl, isProfileOrAvatarUrl } from '../utils/mediaHelpers.js';
 
 export function useGalleryFilters({ media, savedMedia, savedFiles, prefs, onFilterChange }) {
   const [activeType, setActiveTypeState] = useState('all');
@@ -99,7 +99,13 @@ export function useGalleryFilters({ media, savedMedia, savedFiles, prefs, onFilt
       list = [...savedMedia.values()];
     } else if (activeType === 'files') {
       list = savedFiles
-        .filter(x => savedFilter === 'all' || x.type === savedFilter)
+        .filter(x => {
+          if (savedFilter === 'all') return true;
+          if (savedFilter === 'gif') return isItemGif(x);
+          if (savedFilter === 'image') return x.type === 'image' && !isItemGif(x);
+          if (savedFilter === 'video') return x.type === 'video' && !isItemGif(x);
+          return x.type === savedFilter;
+        })
         .map(x => ({
           ...x,
           id: x.id,
@@ -107,18 +113,28 @@ export function useGalleryFilters({ media, savedMedia, savedFiles, prefs, onFilt
           url: x.sourceUrl || '',
           sourceUrl: x.sourceUrl
         }));
+    } else if (activeType === 'gif') {
+      list = media.filter(x => !x.unavailable && isItemGif(x));
+    } else if (activeType === 'image') {
+      list = media.filter(x => !x.unavailable && x.type === 'image' && !isItemGif(x));
+    } else if (activeType === 'video') {
+      list = media.filter(x => !x.unavailable && x.type === 'video' && !isItemGif(x));
     } else {
-      list = media.filter(x => !x.unavailable && (activeType === 'all' || x.type === activeType));
+      list = media.filter(x => !x.unavailable);
     }
+
+    list = list.filter(x => !isDisallowedMediaUrl(x.url));
 
     if (siteFilter === 'x') list = list.filter(x => x.site === 'x');
     else if (siteFilter === 'x-playable') list = list.filter(x => x.site === 'x' && x.type === 'video' && /^https:\/\/video\.twimg\.com\//i.test(x.url));
     else if (siteFilter === 'reddit' || siteFilter === 'reddit-hosted') list = list.filter(x => x.site === 'reddit' && (siteFilter !== 'reddit-hosted' || /redd\.it|reddit\.com/i.test(x.url)));
     else if (siteFilter === 'youtube') list = list.filter(x => x.site === 'youtube');
+    else if (siteFilter === 'tumblr') list = list.filter(x => x.site === 'tumblr');
+    else if (siteFilter === 'tumblr-photosets') list = list.filter(x => x.site === 'tumblr' && (x.isGallery || x.galleryTotal > 1));
 
     if (term) {
       list = list.filter(x =>
-        `${x.alt} ${x.url} ${x.pageTitle} ${x.fileName || ''} ${x.site || ''} ${isItemGif(x) ? 'gif' : ''}`
+        `${x.alt} ${x.url} ${x.pageTitle} ${x.fileName || ''} ${x.site || ''} ${x.blogName || ''} ${(x.tags || []).join(' ')} ${isItemGif(x) ? 'gif' : ''}`
           .toLowerCase()
           .includes(term)
       );
@@ -139,8 +155,9 @@ export function useGalleryFilters({ media, savedMedia, savedFiles, prefs, onFilt
       });
     }
 
+    const tinyThreshold = Number(prefs.minImageDimension) || 200;
     if (prefs.hideSmall) {
-      list = list.filter(x => x.type === 'video' || !x.width || !x.height || (x.width >= 120 && x.height >= 120));
+      list = list.filter(x => x.type === 'video' || !x.width || !x.height || (x.width >= tinyThreshold && x.height >= tinyThreshold));
     }
 
     if (prefs.hideDuplicates) {
@@ -151,6 +168,10 @@ export function useGalleryFilters({ media, savedMedia, savedFiles, prefs, onFilt
         seen.add(key);
         return true;
       });
+    }
+
+    if (prefs.hideAvatars !== false) {
+      list = list.filter(x => !x.isAvatar && !isProfileOrAvatarUrl(x.url) && !isProfileOrAvatarUrl(x.previewUrl) && !isProfileOrAvatarUrl(x.source));
     }
 
     // Stable sort logic: preserve existing cards at their exact display positions
@@ -186,15 +207,16 @@ export function useGalleryFilters({ media, savedMedia, savedFiles, prefs, onFilt
     filteredLengthRef.current = list.length;
 
     return list;
-  }, [media, savedMedia, savedFiles, activeType, savedFilter, siteFilter, search, minKb, orientation, prefs.hideSmall, prefs.hideDuplicates, sortBy]);
+  }, [media, savedMedia, savedFiles, activeType, savedFilter, siteFilter, search, minKb, orientation, prefs.hideSmall, prefs.minImageDimension, prefs.hideDuplicates, prefs.hideAvatars, sortBy]);
 
   // Counts
   const counts = useMemo(() => {
     const available = media.filter(x => !x.unavailable);
     return {
       all: available.length,
-      image: available.filter(x => x.type === 'image').length,
-      video: available.filter(x => x.type === 'video').length,
+      image: available.filter(x => x.type === 'image' && !isItemGif(x)).length,
+      gif: available.filter(x => isItemGif(x)).length,
+      video: available.filter(x => x.type === 'video' && !isItemGif(x)).length,
       saved: savedFiles.length,
       favorites: savedMedia.size
     };

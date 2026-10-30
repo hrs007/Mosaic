@@ -68,6 +68,13 @@ export default function Toolbar() {
           Images <span id="countImage">{counts.image}</span>
         </button>
         <button
+          className={`tab ${activeType === 'gif' ? 'active' : ''}`}
+          data-type="gif"
+          onClick={() => handleTabChange('gif')}
+        >
+          GIFs <span id="countGif">{counts.gif}</span>
+        </button>
+        <button
           className={`tab ${activeType === 'video' ? 'active' : ''}`}
           data-type="video"
           onClick={() => handleTabChange('video')}

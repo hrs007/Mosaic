@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { defaultPrefs } from '../constants/defaults.js';
 import {
   useGalleryFilters,
@@ -35,7 +35,7 @@ export function GalleryProvider({ children }) {
 
   // Update Prefs
   const updatePrefs = useCallback((updates) => {
-    if (updates.hideSmall !== undefined || updates.hideDuplicates !== undefined || updates.sortBy !== undefined) {
+    if (updates.hideSmall !== undefined || updates.minImageDimension !== undefined || updates.hideDuplicates !== undefined || updates.sortBy !== undefined) {
       if (filterState?.userSortTriggeredRef) filterState.userSortTriggeredRef.current = true;
     }
     setPrefsState(prev => {
@@ -175,7 +175,7 @@ export function GalleryProvider({ children }) {
     setSettingsOpen
   });
 
-  const value = {
+  const value = useMemo(() => ({
     tabId,
     prefs,
     setPrefs: updatePrefs,
@@ -230,7 +230,23 @@ export function GalleryProvider({ children }) {
     closeGallery,
     isAdvancing: scannerState.isAdvancing,
     hasReachedEnd: scannerState.hasReachedEnd
-  };
+  }), [
+    tabId, prefs, updatePrefs, scannerState.media, filterState.filtered, filterState.counts,
+    downloadsState.favorites, downloadsState.savedMedia, downloadsState.savedFiles,
+    scannerState.siteProfile, filterState.activeType, filterState.setActiveType,
+    filterState.savedFilter, filterState.setSavedFilter, filterState.siteFilter, filterState.setSiteFilter,
+    filterState.sortBy, filterState.setSortBy, filterState.minKb, filterState.setMinKb,
+    filterState.orientation, filterState.setOrientation, filterState.viewMode, filterState.setViewMode,
+    filterState.search, filterState.setSearch, filterState.filtersOpen, filterState.setFiltersOpen,
+    filterState.page, filterState.setPage, filterState.perPage,
+    viewerState.viewerIndex, viewerState.openViewer, viewerState.closeViewer, viewerState.navigateViewer,
+    settingsOpen, setSettingsOpen, toastMessage, showToast,
+    scannerState.scanStatus, scannerState.loading, scannerState.scanPage, scannerState.scanLiveNow,
+    scannerState.advanceSourcePage, scannerState.checkGalleryFill, scannerState.onGalleryScroll,
+    downloadsState.toggleFavorite, downloadsState.downloadItem, downloadsState.removeSavedFile,
+    downloadsState.clearFavorites, downloadsState.clearLibrary, closeGallery,
+    scannerState.isAdvancing, scannerState.hasReachedEnd
+  ]);
 
   return (
     <GalleryContext.Provider value={value}>

@@ -108,6 +108,26 @@ export default function SettingsDrawer() {
 
           <div className="setting-row">
             <span>
+              <b>Tiny image threshold</b>
+              <small>Minimum dimension for images when hiding tiny media</small>
+            </span>
+            <select
+              id="settingMinImageDimension"
+              value={prefs.minImageDimension || 200}
+              onChange={e => setPrefs({ minImageDimension: Number(e.target.value) })}
+            >
+              <option value={80}>80 px</option>
+              <option value={120}>120 px</option>
+              <option value={150}>150 px</option>
+              <option value={200}>200 px (Default)</option>
+              <option value={250}>250 px</option>
+              <option value={300}>300 px</option>
+              <option value={400}>400 px</option>
+            </select>
+          </div>
+
+          <div className="setting-row">
+            <span>
               <b>On exit scroll position</b>
               <small>Return to previous scroll or keep scrolled position</small>
             </span>

@@ -14,7 +14,7 @@
     "declarativeNetRequest"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://www.dailymotion.com https://player.twitch.tv https://*.googlevideo.com;"
+    "extension_pages": "script-src 'self'; object-src 'self'; frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://www.dailymotion.com https://player.twitch.tv https://*.googlevideo.com https://www.redgifs.com https://streamable.com https://giphy.com;"
   },
   "host_permissions": [
     "<all_urls>"

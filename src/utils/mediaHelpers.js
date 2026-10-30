@@ -1,3 +1,38 @@
+export function isDisallowedMediaUrl(url) {
+  if (!url || typeof url !== 'string') return true;
+  const s = url.trim();
+  if (!s || /^javascript:/i.test(s) || /^data:(?:text|application)\//i.test(s) || /^data:image\/svg\+xml/i.test(s)) return true;
+
+  try {
+    const parsed = new URL(s, 'https://mosaic.internal');
+    const path = parsed.pathname.toLowerCase();
+
+    // Check non-media extensions on URL pathname
+    if (/\.(js|mjs|cjs|jsx|ts|tsx|css|scss|sass|less|map|json|jsonld|wasm|woff2?|ttf|otf|eot|zip|rar|tar|gz|7z|dmg|exe|pkg|deb|rpm|pdf|docx?|xlsx?|pptx?|txt|md|csv|xml)$/i.test(path)) {
+      return true;
+    }
+
+    // Check if query or full string directly targets a script/stylesheet/map
+    if (/\.(js|mjs|cjs|jsx|ts|tsx|css|json|map)(?:[?#]|$)/i.test(s)) {
+      return true;
+    }
+  } catch {
+    if (/\.(js|mjs|cjs|jsx|ts|tsx|css|scss|sass|less|map|json|jsonld|wasm|woff2?|ttf|otf|eot|zip|rar|tar|gz|7z|dmg|exe|pkg|deb|rpm|pdf|docx?|xlsx?|pptx?|txt|md|csv|xml)(?:[?#]|$)/i.test(s)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function isProfileOrAvatarUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  return /twimg\.com\/(?:profile_images|profile_banners|sticky\/default_profile_images)\//i.test(url) ||
+         /(?:styles\.redditmedia\.com\/.*avatar|reddit\.com\/avatar)/i.test(url) ||
+         /(?:avatars\.githubusercontent\.com|yt3\.ggpht\.com)/i.test(url) ||
+         /(?:media\.tumblr\.com\/avatar_|assets\.tumblr\.com\/images\/default_avatar|api\.tumblr\.com\/v2\/blog\/.*\/avatar|s\d+x\d+u_c1\/)/i.test(url);
+}
+
 export function getRedditPostId(url) {
   if (!url) return '';
   const m = String(url).match(/(?:comments\/|comments\/t3_|t3_)([a-zA-Z0-9]+)/i);
@@ -36,18 +71,237 @@ export function parseRedditResolution(url) {
 
 export function isItemGif(item) {
   if (!item) return false;
+  if (item.isGif || item.type === 'gif' || item.postType === 'gif') return true;
   const u = item.sourceUrl || item.source || item.url || '';
   return item.mime === 'image/gif' ||
          /\.(gif|gifv)(?:[?#]|$)/i.test(u) ||
+         /[?&]format=mp4(?:&|$)/i.test(u) ||
+         /(?:giphy\.com|tenor\.com|gfycat\.com)/i.test(u) ||
          /\.(gif|gifv)(?:[?#]|$)/i.test(item.previewUrl || '') ||
          /\.(gif|gifv)(?:[?#]|$)/i.test(item.poster || '');
 }
 
+export function extractRedditThumbnail(post) {
+  if (!post) return '';
+
+  // 1. Direct attributes
+  const directAttr = post.getAttribute?.('thumbnail') ||
+                     post.getAttribute?.('preview-img') ||
+                     post.getAttribute?.('content-src') ||
+                     post.getAttribute?.('preview');
+  if (directAttr && typeof directAttr === 'string' && !isDisallowedMediaUrl(directAttr) && !isProfileOrAvatarUrl(directAttr)) {
+    return directAttr.replace(/&amp;/g, '&');
+  }
+
+  // 2. JSON attributes (packaged-media-json, preview-media-json, post-data)
+  for (const attr of ['packaged-media-json', 'preview-media-json', 'post-data']) {
+    const rawJson = post.getAttribute?.(attr);
+    if (rawJson) {
+      try {
+        const data = JSON.parse(rawJson);
+        const imgObj = data.preview?.images?.[0] || data.images?.[0] || data.thumbnail;
+        if (imgObj) {
+          const srcUrl = imgObj.source?.url || imgObj.url;
+          if (srcUrl && !isDisallowedMediaUrl(srcUrl)) {
+            return srcUrl.replace(/&amp;/g, '&');
+          }
+        }
+      } catch {}
+    }
+  }
+
+  // 3. Child elements: faceplate-img, shreddit-aspect-ratio, slotted thumbnail, etc.
+  const faceplateImg = post.querySelector?.('faceplate-img');
+  const fpSrc = faceplateImg?.getAttribute('src') || faceplateImg?.src;
+  if (fpSrc && !isDisallowedMediaUrl(fpSrc) && !isProfileOrAvatarUrl(fpSrc)) {
+    return fpSrc.replace(/&amp;/g, '&');
+  }
+
+  const candidateImgs = [
+    post.querySelector?.('shreddit-aspect-ratio img'),
+    post.querySelector?.('img[slot="thumbnail"]'),
+    post.querySelector?.('img[alt="media poster"]'),
+    post.querySelector?.('img[loading]'),
+    post.querySelector?.('img')
+  ].filter(Boolean);
+
+  for (const img of candidateImgs) {
+    const src = img.currentSrc || img.getAttribute?.('src') || img.getAttribute?.('data-src') || '';
+    if (src && !isDisallowedMediaUrl(src) && !isProfileOrAvatarUrl(src) && !src.startsWith('data:image/svg')) {
+      return src.replace(/&amp;/g, '&');
+    }
+  }
+
+  return '';
+}
+
+export function detectExternalVideo(contentHref = '', domain = '', post = null) {
+  let targetUrl = contentHref || '';
+  const dom = (domain || '').toLowerCase();
+
+  // If contentHref is empty or generic, check anchor tags inside the post
+  if ((!targetUrl || targetUrl === '#' || /reddit\.com/i.test(targetUrl)) && post) {
+    const externalLink = post.querySelector?.('a[href*="redgifs.com"], a[href*="streamable.com"], a[href*="imgur.com"], a[href*="giphy.com"], a[href*="youtube.com"], a[href*="youtu.be"]');
+    if (externalLink?.href) targetUrl = externalLink.href;
+  }
+
+  // 1. RedGifs
+  const isRedGifs = /redgifs\.com/i.test(targetUrl) || dom.includes('redgifs');
+  if (isRedGifs) {
+    const match = targetUrl.match(/redgifs\.com\/(?:watch|ifr)\/([a-zA-Z0-9_-]+)/i);
+    const id = match ? match[1].replace(/\?.*$/, '') : '';
+    const embedUrl = id ? `https://www.redgifs.com/ifr/${id}?autoplay=0` : targetUrl;
+    return {
+      provider: 'redgifs',
+      id,
+      embedUrl,
+      isEmbed: true,
+      isVideo: true,
+      isGif: true,
+      directUrl: '',
+      fallbackUrls: id ? [
+        `https://thumbs2.redgifs.com/${id}.mp4`,
+        `https://thumbs2.redgifs.com/${id}-mobile.mp4`,
+        `https://media.redgifs.com/${id}.mp4`
+      ] : [],
+      poster: id ? `https://thumbs2.redgifs.com/${id}.jpg` : ''
+    };
+  }
+
+  // 2. Streamable
+  const isStreamable = /streamable\.com/i.test(targetUrl) || dom.includes('streamable');
+  if (isStreamable) {
+    const match = targetUrl.match(/streamable\.com\/(?:e\/|o\/)?([a-zA-Z0-9]+)/i);
+    const id = match ? match[1].replace(/\?.*$/, '') : '';
+    const embedUrl = id ? `https://streamable.com/e/${id}?autoplay=0` : targetUrl;
+    return {
+      provider: 'streamable',
+      id,
+      embedUrl,
+      isEmbed: true,
+      isVideo: true,
+      isGif: false,
+      directUrl: '',
+      fallbackUrls: [],
+      poster: ''
+    };
+  }
+
+  // 3. Imgur
+  const isImgur = /imgur\.com/i.test(targetUrl) || dom.includes('imgur');
+  if (isImgur) {
+    if (/\.(mp4|gifv)(?:[?#]|$)/i.test(targetUrl)) {
+      const mp4Url = targetUrl.replace(/\.gifv(?:[?#]|$)/i, '.mp4');
+      return {
+        provider: 'imgur',
+        id: '',
+        embedUrl: '',
+        isEmbed: false,
+        isVideo: true,
+        isGif: true,
+        directUrl: mp4Url,
+        fallbackUrls: [mp4Url],
+        poster: mp4Url.replace(/\.mp4(?:[?#]|$)/i, '.jpg')
+      };
+    }
+  }
+
+  // 4. Giphy
+  const isGiphy = /giphy\.com/i.test(targetUrl) || dom.includes('giphy');
+  if (isGiphy) {
+    const match = targetUrl.match(/giphy\.com\/(?:gifs|media)\/(?:.*-)?([a-zA-Z0-9]+)/i);
+    const id = match ? match[1].replace(/\?.*$/, '') : '';
+    const embedUrl = id ? `https://giphy.com/embed/${id}` : targetUrl;
+    const mp4Url = id ? `https://media.giphy.com/media/${id}/giphy.mp4` : '';
+    return {
+      provider: 'giphy',
+      id,
+      embedUrl,
+      isEmbed: !mp4Url,
+      isVideo: true,
+      isGif: true,
+      directUrl: mp4Url,
+      fallbackUrls: mp4Url ? [mp4Url] : [],
+      poster: id ? `https://media.giphy.com/media/${id}/giphy.gif` : ''
+    };
+  }
+
+  // 5. YouTube
+  const isYouTube = /(?:youtube\.com|youtu\.be)/i.test(targetUrl) || dom.includes('youtube') || dom.includes('youtu.be');
+  if (isYouTube) {
+    const match = targetUrl.match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/i);
+    const id = match ? match[1] : '';
+    const embedUrl = id ? `https://www.youtube-nocookie.com/embed/${id}?autoplay=0` : targetUrl;
+    return {
+      provider: 'youtube',
+      id,
+      embedUrl,
+      isEmbed: true,
+      isVideo: true,
+      isGif: false,
+      directUrl: '',
+      fallbackUrls: id ? [
+        `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
+        `https://i.ytimg.com/vi/${id}/hqdefault.jpg`
+      ] : [],
+      poster: id ? `https://i.ytimg.com/vi/${id}/maxresdefault.jpg` : ''
+    };
+  }
+
+  return null;
+}
+
 export function canonicalMediaId(url, item = null) {
+  if (isDisallowedMediaUrl(url)) return '';
   try {
     const raw = String(url || '');
-    const ytMatch = raw.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|shorts\/|watch\?v=))([a-zA-Z0-9_-]{11})/i);
+    const ytMatch = raw.match(/(?:youtu\.be\/|(?:youtube\.com|youtube-nocookie\.com)\/(?:embed\/|shorts\/|live\/|watch\?(?:.*&)?v=))([a-zA-Z0-9_-]{11})/i);
     if (ytMatch) return `youtube:${ytMatch[1]}`;
+
+    if (item && item.site === 'tumblr') {
+      const postId = item.postId;
+      const assetHash = raw.match(/tumblr_([a-zA-Z0-9]+)/i)?.[1] || raw.match(/media\.tumblr\.com\/([a-f0-9]{32})/i)?.[1];
+      if (postId && item.galleryIndex != null) {
+        return `tumblr:post:${postId}:${item.galleryIndex}`;
+      }
+      if (postId && assetHash) {
+        return `tumblr:post:${postId}:${assetHash}`;
+      }
+      if (postId && item.type === 'video') {
+        return `tumblr:video:${postId}`;
+      }
+      if (postId) {
+        return `tumblr:post:${postId}`;
+      }
+      if (assetHash) return `tumblr:media:${assetHash}`;
+    } else if (raw.includes('media.tumblr.com')) {
+      const assetHash = raw.match(/tumblr_([a-zA-Z0-9]+)/i)?.[1] || raw.match(/media\.tumblr\.com\/([a-f0-9]{32})/i)?.[1];
+      if (assetHash) return `tumblr:media:${assetHash}`;
+    }
+
+    if (item && item.site === 'x') {
+      const mediaId = (item.poster || item.previewUrl || item.source || raw).match(/(?:amplify_video_thumb|ext_tw_video_thumb|tweet_video_thumb|amplify_video|ext_tw_video|tweet_video)\/(\d+)/i)?.[1];
+      if (mediaId) return `x:video:${mediaId}`;
+      const tweetId = raw.match(/status\/(\d+)/)?.[1] || (item.postUrl || '').match(/status\/(\d+)/)?.[1];
+      if (tweetId) return `x:tweet:${tweetId}`;
+    } else if (raw.includes('twimg.com')) {
+      const mediaId = raw.match(/(?:amplify_video_thumb|ext_tw_video_thumb|tweet_video_thumb|amplify_video|ext_tw_video|tweet_video)\/(\d+)/i)?.[1];
+      if (mediaId) return `x:video:${mediaId}`;
+    }
+
+    if (item && item.site === 'reddit') {
+      const isGal = item.isGallery || item.postType === 'gallery' || item.galleryIndex != null;
+      const pId = item.postId ? String(item.postId).replace(/^t3_/, '').toLowerCase() : getRedditPostId(item.postUrl || raw);
+      if (pId && (item.type === 'video' || item.isGif || item.postType === 'video' || item.postType === 'gif' || item.isEmbed)) {
+        return `reddit:post-video:${pId}`;
+      }
+      if (pId && !isGal) {
+        return `reddit:post:${pId}`;
+      }
+      if (pId && isGal && item.galleryIndex != null) {
+        return `reddit:gallery:${pId}:${item.galleryIndex}`;
+      }
+    }
 
     const redditVid = getRedditVideoId(raw) || (item && item.site === 'reddit' && item.type === 'video' ? getRedditVideoId(item.source || '') : '');
     if (redditVid) return `reddit:video:${redditVid}`;
@@ -66,7 +320,8 @@ export function canonicalMediaId(url, item = null) {
       if (rId) return `reddit:image:${rId}`;
     }
     for (const [k, v] of [...u.searchParams]) {
-      if (/^(width|height|w|h|quality|crop|auto|format)$/i.test(k)) u.searchParams.delete(k);
+      if (/^(width|height|w|h|quality|crop|auto)$/i.test(k)) u.searchParams.delete(k);
+      else if (k.toLowerCase() === 'format' && v.toLowerCase() !== 'mp4') u.searchParams.delete(k);
       else if (k.toLowerCase() === 'q' && /^\d+$/.test(v)) u.searchParams.delete(k);
       else if (k.toLowerCase() === 'name' && /^(small|medium|large|orig|900x900)$/i.test(v)) u.searchParams.delete(k);
     }
@@ -76,19 +331,68 @@ export function canonicalMediaId(url, item = null) {
   }
 }
 
+export function isDirectPlayableVideo(url) {
+  if (!url || typeof url !== 'string' || isDisallowedMediaUrl(url)) return false;
+  if (/^blob:/i.test(url) || /^data:video\//i.test(url)) return true;
+  if (url.includes('youtube.com') || url.includes('youtube-nocookie.com') || url.includes('youtu.be') || url.includes('#mosaic-video-')) return false;
+  if (/redgifs\.com\/(?:ifr|watch)/i.test(url) || /streamable\.com\/(?:e\/|[a-zA-Z0-9]+$)/i.test(url)) return false;
+  return /\.(mp4|webm|mov|m4v|ogv)(?:[?#]|$)/i.test(url) ||
+         /[?&]format=mp4(?:&|$)/i.test(url) ||
+         /video\.twimg\.com|v\.redd\.it|thumbs2\.redgifs\.com|media\.redgifs\.com|media\.giphy\.com/i.test(url);
+}
+
 export function getPlayableVideoUrl(item) {
-  if (!item || item.type !== 'video') return '';
+  if (!item) return '';
+  if (item.type !== 'video' && !isItemGif(item)) return '';
   if (item.savedFile) return item.sourceUrl || item.url || '';
+  if (item.isEmbed || item.site === 'youtube') return '';
+
   const candidates = [
     item.sourceUrl,
     item.source,
     item.url,
     ...(item.fallbackUrls || [])
-  ].filter(u => u && typeof u === 'string' && !/^blob:/i.test(u) && !u.includes('#mosaic-video-') && !/\.(jpe?g|png|webp|avif|gif|svg)(?:[?#]|$)/i.test(u));
-  const direct = candidates.find(u => /\.(mp4|webm|mov|m4v|ogv)(?:[?#]|$)/i.test(u) || /video\.twimg\.com|v\.redd\.it/i.test(u));
+  ].filter(u => {
+    if (!u || typeof u !== 'string' || u.includes('#mosaic-video-')) return false;
+    if (/[?&]format=mp4(?:&|$)/i.test(u)) return true;
+    return !/\.(jpe?g|png|webp|avif|gif|svg)(?:[?#]|$)/i.test(u);
+  });
+
+  const direct = candidates.find(u => isDirectPlayableVideo(u));
   if (direct) return direct;
-  if (item.playbackPage && candidates[0] === item.playbackPage) return '';
-  return candidates[0] || '';
+  return '';
+}
+
+export function getGifAnimatedUrl(item) {
+  if (!item) return '';
+  if (!isItemGif(item)) return '';
+
+  // 1. Playable video URL (e.g. format=mp4 or .mp4 loop)
+  const playable = getPlayableVideoUrl(item);
+  if (playable) return playable;
+
+  // 2. Native Reddit preview URL -> convert to full animated i.redd.it gif
+  const rawUrl = item.url || item.sourceUrl || item.source || '';
+  try {
+    const u = new URL(rawUrl);
+    if (u.hostname === 'preview.redd.it' && /\.gif(?:[?#]|$)/i.test(rawUrl)) {
+      const parts = u.pathname.split('/').filter(Boolean);
+      const filename = parts.pop() || '';
+      const base = filename.split('.')[0];
+      if (base) return `https://i.redd.it/${base}.gif`;
+    }
+  } catch {}
+
+  // 3. Check fallbacks
+  if (Array.isArray(item.fallbackUrls)) {
+    const anim = item.fallbackUrls.find(u => typeof u === 'string' && (/\.gif(?:[?#]|$)/i.test(u) || /[?&]format=mp4/i.test(u)));
+    if (anim) return anim;
+  }
+
+  // 4. Return raw url or .gif converted
+  if (/\.gifv(?:[?#]|$)/i.test(rawUrl)) return rawUrl.replace(/\.gifv/i, '.gif');
+  if (/\.gif(?:[?#]|$)/i.test(rawUrl)) return rawUrl;
+  return item.url || '';
 }
 
 export function isItemDownloaded(item, savedFiles = []) {
@@ -118,9 +422,44 @@ export function formatSize(n) {
 }
 
 export function formatVideoTime(value) {
-  if (!Number.isFinite(value)) return '0:00';
-  const seconds = Math.floor(value);
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  if (!Number.isFinite(value) || value < 0) return '0:00';
+  const totalSeconds = Math.floor(value);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+export function formatDuration(val) {
+  if (!val && val !== 0) return '';
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (/^\d+:\d+(?::\d+)?$/.test(trimmed)) return trimmed;
+    const isoMatch = trimmed.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/i);
+    if (isoMatch && (isoMatch[1] || isoMatch[2] || isoMatch[3])) {
+      const h = parseInt(isoMatch[1] || '0', 10);
+      const m = parseInt(isoMatch[2] || '0', 10);
+      const s = parseInt(isoMatch[3] || '0', 10);
+      return formatDuration(h * 3600 + m * 60 + s);
+    }
+    const num = parseFloat(trimmed);
+    if (!isNaN(num) && num > 0) return formatDuration(num);
+    return '';
+  }
+  if (typeof val === 'number' && Number.isFinite(val) && val > 0) {
+    const totalSec = Math.round(val);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    if (h > 0) {
+      return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+  return '';
 }
 
 export function pageIdentity(url) {

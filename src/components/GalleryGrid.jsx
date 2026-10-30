@@ -1,5 +1,6 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { useGallery } from '../context/GalleryContext.jsx';
+import { isItemDownloaded } from '../utils/mediaHelpers.js';
 import MediaCard from './MediaCard.jsx';
 
 function getColumnCount(width, userColumns) {
@@ -12,7 +13,42 @@ function getColumnCount(width, userColumns) {
 }
 
 export default function GalleryGrid() {
-  const { filtered, viewMode, page, perPage, prefs, sortBy, activeType } = useGallery();
+  const {
+    filtered,
+    viewMode,
+    page,
+    perPage,
+    prefs,
+    sortBy,
+    activeType,
+    favorites,
+    savedFiles,
+    toggleFavorite,
+    downloadItem,
+    showToast,
+    openViewer
+  } = useGallery();
+
+  const savedIdsSet = useMemo(() => {
+    const s = new Set();
+    if (!savedFiles || !savedFiles.length) return s;
+    for (const f of savedFiles) {
+      if (!f) continue;
+      if (f.id) s.add(f.id);
+      if (f.sourceUrl) s.add(f.sourceUrl);
+      if (f.url) s.add(f.url);
+    }
+    return s;
+  }, [savedFiles]);
+
+  const checkIsDownloaded = useCallback((item) => {
+    if (!item) return false;
+    if (item.savedFile || item.saved || item.downloadId) return true;
+    if (savedIdsSet.has(item.id)) return true;
+    if (item.sourceUrl && savedIdsSet.has(item.sourceUrl)) return true;
+    if (item.url && savedIdsSet.has(item.url)) return true;
+    return isItemDownloaded(item, savedFiles);
+  }, [savedIdsSet, savedFiles]);
 
   // Dynamic column count calculation based on window width and user preferences
   const [columnCount, setColumnCount] = useState(() =>
@@ -34,8 +70,9 @@ export default function GalleryGrid() {
       entries.forEach(entry => {
         const video = entry.target;
         if (!video) return;
+        const isGif = video.dataset.isGif === 'true';
         if (entry.isIntersecting) {
-          if (prefs.autoplayMode === 'grid') {
+          if (prefs.autoplayMode === 'grid' || isGif) {
             video.muted = true;
             video.defaultMuted = true;
             video.play().catch(() => {});
@@ -120,6 +157,13 @@ export default function GalleryGrid() {
                 item={item}
                 index={index}
                 observer={observer}
+                isFavorited={favorites.has(item.id)}
+                isDownloaded={checkIsDownloaded(item)}
+                prefs={prefs}
+                onToggleFavorite={toggleFavorite}
+                onDownloadItem={downloadItem}
+                onOpenViewer={openViewer}
+                onShowToast={showToast}
               />
             ))}
           </div>
@@ -139,6 +183,13 @@ export default function GalleryGrid() {
           item={item}
           index={index}
           observer={observer}
+          isFavorited={favorites.has(item.id)}
+          isDownloaded={checkIsDownloaded(item)}
+          prefs={prefs}
+          onToggleFavorite={toggleFavorite}
+          onDownloadItem={downloadItem}
+          onOpenViewer={openViewer}
+          onShowToast={showToast}
         />
       ))}
     </div>

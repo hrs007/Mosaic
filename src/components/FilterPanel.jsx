@@ -1,5 +1,6 @@
 import React from 'react';
 import { useGallery } from '../context/GalleryContext.jsx';
+import { ResetIcon } from '../constants/icons.jsx';
 
 export default function FilterPanel() {
   const {
@@ -42,9 +43,18 @@ export default function FilterPanel() {
       minKb: 0,
       orientation: 'any',
       hideSmall: false,
-      hideDuplicates: false
+      hideDuplicates: false,
+      hideAvatars: true
     });
   };
+
+  const isFilterActive = Boolean(
+    minKb > 0 ||
+    orientation !== 'any' ||
+    prefs.hideSmall ||
+    prefs.hideDuplicates ||
+    prefs.hideAvatars === false
+  );
 
   return (
     <div className="filter-panel" id="filterPanel">
@@ -143,27 +153,92 @@ export default function FilterPanel() {
         </div>
       </div>
 
-      <div className="filter-group filter-checks">
-        <label>
-          <input
-            type="checkbox"
-            id="hideSmall"
-            checked={!!prefs.hideSmall}
-            onChange={e => setPrefs({ hideSmall: e.target.checked })}
-          />
-          {' '}Hide tiny images (&lt; 120px)
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            id="hideDuplicates"
-            checked={!!prefs.hideDuplicates}
-            onChange={e => setPrefs({ hideDuplicates: e.target.checked })}
-          />
-          {' '}Hide duplicates
-        </label>
-        <button id="clearFilters" onClick={handleClearAll}>
-          Clear all
+      <div className="filter-group filter-rules-group">
+        <span className="filter-title">CLEANUP</span>
+        <div className="filter-rules-row">
+          {/* Hide tiny with integrated threshold dropdown */}
+          <div className={`filter-rule-pill has-select ${prefs.hideSmall ? 'active' : ''}`}>
+            <label className="rule-label" htmlFor="hideSmall" title="Filter out images smaller than the selected threshold">
+              <input
+                type="checkbox"
+                id="hideSmall"
+                className="rule-checkbox"
+                checked={!!prefs.hideSmall}
+                onChange={e => setPrefs({ hideSmall: e.target.checked })}
+              />
+              <span className="rule-text">Hide tiny</span>
+            </label>
+            <div className="rule-divider" />
+            <div className="rule-select-wrap">
+              <span className="rule-lt">&lt;</span>
+              <select
+                id="tinySizeSelect"
+                className="rule-select"
+                value={prefs.minImageDimension || 200}
+                onChange={e => {
+                  setPrefs({
+                    minImageDimension: Number(e.target.value),
+                    hideSmall: true
+                  });
+                }}
+                title="Select tiny image size threshold"
+              >
+                <option value={80}>80px</option>
+                <option value={120}>120px</option>
+                <option value={150}>150px</option>
+                <option value={200}>200px</option>
+                <option value={250}>250px</option>
+                <option value={300}>300px</option>
+                <option value={400}>400px</option>
+              </select>
+              <span className="rule-select-arrow" aria-hidden="true">▾</span>
+            </div>
+          </div>
+
+          {/* Hide duplicates */}
+          <label
+            className={`filter-rule-pill ${prefs.hideDuplicates ? 'active' : ''}`}
+            htmlFor="hideDuplicates"
+            title="Filter out repeated or duplicate images"
+          >
+            <input
+              type="checkbox"
+              id="hideDuplicates"
+              className="rule-checkbox"
+              checked={!!prefs.hideDuplicates}
+              onChange={e => setPrefs({ hideDuplicates: e.target.checked })}
+            />
+            <span className="rule-text">Hide duplicates</span>
+          </label>
+
+          {/* Hide avatars / profile pictures */}
+          <label
+            className={`filter-rule-pill ${prefs.hideAvatars !== false ? 'active' : ''}`}
+            htmlFor="hideAvatars"
+            title="Filter out profile pictures and avatars"
+          >
+            <input
+              type="checkbox"
+              id="hideAvatars"
+              className="rule-checkbox"
+              checked={prefs.hideAvatars !== false}
+              onChange={e => setPrefs({ hideAvatars: e.target.checked })}
+            />
+            <span className="rule-text">Hide avatars</span>
+          </label>
+        </div>
+      </div>
+
+      <div className="filter-group filter-actions-group">
+        <span className="filter-title">&nbsp;</span>
+        <button
+          id="clearFilters"
+          className={`clear-filters-btn ${isFilterActive ? 'has-active' : ''}`}
+          onClick={handleClearAll}
+          title="Reset all filters to default"
+        >
+          <ResetIcon size={12} className="clear-icon" />
+          <span>Clear all</span>
         </button>
       </div>
     </div>

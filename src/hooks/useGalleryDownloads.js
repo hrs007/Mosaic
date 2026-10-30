@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { canonicalMediaId } from '../utils/mediaHelpers.js';
+import { canonicalMediaId, isItemGif, getGifAnimatedUrl } from '../utils/mediaHelpers.js';
 import {
   refreshSavedFiles,
   clearLibraryStorage,
@@ -123,12 +123,32 @@ export function useGalleryDownloads({ mediaRef, showToast, onFilterRefresh }) {
   // Download Item to Downloads / Mosaic
   const downloadItem = useCallback(async (item) => {
     try {
-      const sourceUrl = item.sourceUrl || item.source || item.url;
+      let sourceUrl = item.sourceUrl || item.source || item.url;
+      let downloadType = item.type;
+      if (item.site === 'youtube' && (sourceUrl === item.playbackPage || sourceUrl === item.url || !/\.(mp4|webm)/i.test(sourceUrl))) {
+        // YouTube videos are embeds; save the highest-quality thumbnail image
+        const bestThumb = (item.fallbackUrls || []).find(u => u && !u.includes('hqdefault.jpg')) || item.poster || item.previewUrl;
+        if (bestThumb) {
+          sourceUrl = bestThumb;
+          downloadType = 'image';
+        }
+      } else if (isItemGif(item)) {
+        const animUrl = getGifAnimatedUrl(item);
+        if (animUrl) {
+          sourceUrl = animUrl;
+          if (/\.(mp4|webm|mov|m4v|ogv)(?:[?#]|$)/i.test(animUrl)) {
+            downloadType = 'video';
+          } else {
+            downloadType = 'image';
+          }
+        }
+      }
+
       if (!sourceUrl || /^(blob|data):/i.test(sourceUrl)) {
         showToast('This media has no downloadable file URL.');
         return;
       }
-      if (item.type === 'video' && item.playbackPage && sourceUrl === item.playbackPage) {
+      if (downloadType === 'video' && item.playbackPage && sourceUrl === item.playbackPage) {
         showToast('This post does not expose a video file to save.');
         return;
       }
@@ -137,10 +157,13 @@ export function useGalleryDownloads({ mediaRef, showToast, onFilterRefresh }) {
         showToast('Already saved in your Mosaic library.');
         return;
       }
-      const sourceName = item.fileName || sourceUrl.split('/').pop()?.split('?')[0] || (item.type === 'video' ? 'video.mp4' : 'image.jpg');
-      const fallback = item.type === 'video' ? 'video.mp4' : 'image.jpg';
+      const sourceName = item.fileName || sourceUrl.split('/').pop()?.split('?')[0] || (downloadType === 'video' ? 'video.mp4' : 'image.jpg');
+      const fallback = downloadType === 'video' ? 'video.mp4' : 'image.jpg';
       let name = (sourceName || fallback).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || fallback;
-      if (!/\.(mp4|webm|mov|m4v|ogv|jpe?g|png|gif|webp|avif)$/i.test(name)) name += item.type === 'video' ? '.mp4' : '.jpg';
+      if (/\.gifv$/i.test(name)) {
+        name = name.replace(/\.gifv$/i, '.gif');
+      }
+      if (!/\.(mp4|webm|mov|m4v|ogv|jpe?g|png|gif|webp|avif)$/i.test(name)) name += downloadType === 'video' ? '.mp4' : '.jpg';
 
       const downloadId = await chrome.downloads.download({
         url: sourceUrl,
@@ -154,7 +177,7 @@ export function useGalleryDownloads({ mediaRef, showToast, onFilterRefresh }) {
         id,
         downloadId,
         sourceUrl,
-        type: item.type === 'video' ? 'video' : 'image',
+        type: downloadType === 'video' ? 'video' : 'image',
         alt: item.alt || name,
         fileName: name,
         pageTitle: item.pageTitle || '',
@@ -165,6 +188,7 @@ export function useGalleryDownloads({ mediaRef, showToast, onFilterRefresh }) {
         width: item.width || 0,
         height: item.height || 0,
         size: item.size || 0,
+        duration: item.duration || 0,
         savedAt: Date.now(),
         mime: item.mime || '',
         storageMode: 'download',

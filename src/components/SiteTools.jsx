@@ -27,12 +27,14 @@ export default function SiteTools() {
             {siteProfile.key === 'x' ? 'X media'
               : siteProfile.key === 'reddit' ? 'Reddit media'
               : siteProfile.key === 'youtube' ? 'YouTube videos'
+              : siteProfile.key === 'tumblr' ? 'Tumblr media'
               : 'Page media'}
           </b>
           <small id="siteHint">
             {siteProfile.key === 'x' ? 'Loaded posts · playable clips · originals'
               : siteProfile.key === 'reddit' ? 'Post images · hosted videos · discussions'
               : siteProfile.key === 'youtube' ? 'Watch videos · shorts · embedded players'
+              : siteProfile.key === 'tumblr' ? 'Photosets · GIFs · original sizes · posts'
               : 'Actions for media on this page'}
           </small>
         </div>
@@ -63,6 +65,12 @@ export default function SiteTools() {
             >
               X images
             </button>
+            <button
+              className={`site-action ${siteFilter === 'x' && activeType === 'gif' ? 'active' : ''}`}
+              onClick={() => handleSiteFilter('gif', 'x')}
+            >
+              X GIFs
+            </button>
           </>
         )}
 
@@ -73,6 +81,12 @@ export default function SiteTools() {
               onClick={() => handleSiteFilter('image', 'reddit')}
             >
               Reddit images
+            </button>
+            <button
+              className={`site-action ${siteFilter === 'reddit' && activeType === 'gif' ? 'active' : ''}`}
+              onClick={() => handleSiteFilter('gif', 'reddit')}
+            >
+              Reddit GIFs
             </button>
             <button
               className={`site-action ${siteFilter === 'reddit' && activeType === 'video' ? 'active' : ''}`}
@@ -102,6 +116,41 @@ export default function SiteTools() {
               onClick={() => handleSiteFilter('image', 'youtube')}
             >
               Thumbnails
+            </button>
+          </>
+        )}
+
+        {siteProfile.key === 'tumblr' && (
+          <>
+            <button
+              className={`site-action ${siteFilter === 'tumblr' && activeType === 'all' ? 'active' : ''}`}
+              onClick={() => handleSiteFilter('all', 'tumblr')}
+            >
+              All Tumblr
+            </button>
+            <button
+              className={`site-action ${siteFilter === 'tumblr-photosets' ? 'active' : ''}`}
+              onClick={() => handleSiteFilter('all', 'tumblr-photosets')}
+            >
+              Photosets
+            </button>
+            <button
+              className={`site-action ${siteFilter === 'tumblr' && activeType === 'gif' ? 'active' : ''}`}
+              onClick={() => handleSiteFilter('gif', 'tumblr')}
+            >
+              Tumblr GIFs
+            </button>
+            <button
+              className={`site-action ${siteFilter === 'tumblr' && activeType === 'image' ? 'active' : ''}`}
+              onClick={() => handleSiteFilter('image', 'tumblr')}
+            >
+              Images
+            </button>
+            <button
+              className={`site-action ${siteFilter === 'tumblr' && activeType === 'video' ? 'active' : ''}`}
+              onClick={() => handleSiteFilter('video', 'tumblr')}
+            >
+              Videos
             </button>
           </>
         )}

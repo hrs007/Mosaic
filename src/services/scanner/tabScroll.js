@@ -17,17 +17,28 @@ export function advanceTabScroll() {
 
   const feedContainers = document.querySelectorAll('main, [role="feed"], [role="main"], #content, [data-testid="primaryColumn"]');
   for (const el of feedContainers) {
-    if (el && el.scrollHeight > el.clientHeight + 100) {
-      const prevElY = el.scrollTop;
-      el.scrollTop += step;
-      if (el.scrollTop !== prevElY) {
-        scrolledContainer = true;
+    if (!el) continue;
+    try {
+      const style = window.getComputedStyle(el);
+      const isScrollable = (style.overflowY === 'auto' || style.overflowY === 'scroll');
+      if (isScrollable && el.scrollHeight > el.clientHeight + 100) {
+        const prevElY = el.scrollTop;
+        el.scrollTop += step;
+        if (el.scrollTop !== prevElY) {
+          scrolledContainer = true;
+        }
+        if (el.scrollTop + el.clientHeight >= el.scrollHeight - 50) {
+          containerAtBottom = true;
+        }
       }
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 50) {
-        containerAtBottom = true;
-      }
-    }
+    } catch {}
   }
+
+  // Dispatch scroll event so YouTube and SPA observers trigger immediately
+  try {
+    window.dispatchEvent(new Event('scroll'));
+    document.dispatchEvent(new Event('scroll'));
+  } catch {}
 
   const docEl = document.documentElement;
   const body = document.body;

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useGallery } from '../context/GalleryContext.jsx';
 
 export default function CardActionMenu({ item, anchorRect, onClose, onOpenViewer }) {
@@ -6,13 +7,37 @@ export default function CardActionMenu({ item, anchorRect, onClose, onOpenViewer
   const menuRef = useRef(null);
 
   useEffect(() => {
+    let active = true;
+
     const handleOutsideClick = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(e.target) &&
+        !e.target.closest('.card-more')
+      ) {
         onClose();
       }
     };
-    document.addEventListener('click', handleOutsideClick);
-    return () => document.removeEventListener('click', handleOutsideClick);
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    // Attach outside listener on next tick so the opening click does not immediately close the menu
+    const timer = setTimeout(() => {
+      if (!active) return;
+      document.addEventListener('click', handleOutsideClick);
+      document.addEventListener('keydown', handleKeyDown);
+    }, 0);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      document.removeEventListener('click', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
   }, [onClose]);
 
   const directUrl = item.sourceUrl || item.source || item.url;
@@ -33,6 +58,7 @@ export default function CardActionMenu({ item, anchorRect, onClose, onOpenViewer
     const encoded = encodeURIComponent(url);
     const targets = {
       lens: `https://lens.google.com/uploadbyurl?url=${encoded}`,
+      yandex: `https://yandex.com/images/search?rpt=imageview&url=${encoded}`,
       bing: `https://www.bing.com/images/searchbyimage?cbir=sbi&imgurl=${encoded}`,
       tineye: `https://tineye.com/search?url=${encoded}`
     };
@@ -40,16 +66,38 @@ export default function CardActionMenu({ item, anchorRect, onClose, onOpenViewer
     onClose();
   };
 
-  // Position calculation
+  // Position calculation: keep menu within viewport
+  const menuWidth = 185;
+  const menuEstimatedHeight = 230;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 800;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 600;
+
+  let left = Math.min((anchorRect?.right || 0) - menuWidth + 20, viewportWidth - menuWidth - 10);
+  if (left < 10) left = 10;
+
+  // Open upwards if not enough room below the trigger button
+  const spaceBelow = viewportHeight - (anchorRect?.bottom || 0);
+  let top = (anchorRect?.bottom || 0) + 4;
+  if (spaceBelow < menuEstimatedHeight && (anchorRect?.top || 0) > menuEstimatedHeight) {
+    top = Math.max(10, (anchorRect?.top || 0) - menuEstimatedHeight - 4);
+  } else {
+    top = Math.max(10, Math.min(top, viewportHeight - menuEstimatedHeight - 10));
+  }
+
   const style = {
     position: 'fixed',
-    zIndex: 2100,
-    left: `${Math.min((anchorRect?.right || 0) - 160, window.innerWidth - 170)}px`,
-    top: `${Math.min((anchorRect?.bottom || 0) + 4, window.innerHeight - 160)}px`
+    zIndex: 99999,
+    left: `${left}px`,
+    top: `${top}px`
   };
 
-  return (
-    <div className="card-action-menu" ref={menuRef} style={style}>
+  const menuContent = (
+    <div
+      className="card-action-menu"
+      ref={menuRef}
+      style={style}
+      onClick={e => e.stopPropagation()}
+    >
       <button onClick={() => { onClose(); onOpenViewer(); }}>
         Open in viewer
       </button>
@@ -70,6 +118,8 @@ export default function CardActionMenu({ item, anchorRect, onClose, onOpenViewer
           <button onClick={() => { window.open(postOrPage, '_blank', 'noopener'); onClose(); }}>
             {item.site === 'x' ? 'Open X post ↗'
               : item.site === 'reddit' ? 'Open Reddit thread ↗'
+              : item.site === 'youtube' ? 'Watch on YouTube ↗'
+              : item.site === 'tumblr' ? 'Open Tumblr post ↗'
               : 'Open source page ↗'}
           </button>
           <button onClick={() => copyText(postOrPage)}>
@@ -101,10 +151,17 @@ export default function CardActionMenu({ item, anchorRect, onClose, onOpenViewer
       )}
 
       {item.type === 'image' && isDirectValid && (
-        <button onClick={() => openReverseSearch('lens', directUrl)}>
-          Reverse image search (Lens)
-        </button>
+        <>
+          <button onClick={() => openReverseSearch('lens', directUrl)}>
+            Reverse search (Google Lens)
+          </button>
+          <button onClick={() => openReverseSearch('yandex', directUrl)}>
+            Reverse search (Yandex)
+          </button>
+        </>
       )}
     </div>
   );
+
+  return createPortal(menuContent, document.body);
 }

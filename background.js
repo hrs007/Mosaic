@@ -54,6 +54,13 @@ async function toggleGallery(tab) {
           if (window.__mosaicInitialScroll) {
             window.scrollTo(window.__mosaicInitialScroll.x, window.__mosaicInitialScroll.y);
           }
+          if (window.__mosaicWasPlaying) {
+            try {
+              const vid = document.querySelector('video.html5-main-video') || document.querySelector('video');
+              vid?.play?.().catch(() => {});
+            } catch {}
+            window.__mosaicWasPlaying = false;
+          }
         }
       }).catch(() => {});
     } else {
@@ -64,6 +71,22 @@ async function toggleGallery(tab) {
         func: (url) => {
           try {
             window.__mosaicInitialScroll = { x: window.scrollX || window.pageXOffset || 0, y: window.scrollY || window.pageYOffset || 0 };
+          } catch {}
+
+          // If host page has a playing video (e.g. YouTube watch page), pause it to prevent audio clash
+          try {
+            const vid = document.querySelector('video.html5-main-video') || document.querySelector('video');
+            if (vid && !vid.paused) {
+              window.__mosaicWasPlaying = true;
+              vid.pause();
+            }
+          } catch {}
+
+          // If tab is in fullscreen, exit fullscreen so overlay is visible in top layer
+          try {
+            if (document.fullscreenElement) {
+              document.exitFullscreen?.().catch(() => {});
+            }
           } catch {}
 
           // Remove any existing overlay
@@ -102,7 +125,7 @@ async function toggleGallery(tab) {
             border: '0'
           });
           root.appendChild(frame);
-          document.documentElement.appendChild(host);
+          (document.body || document.documentElement).appendChild(host);
 
           const cleanup = (shouldRestore = true) => {
             window.removeEventListener('keydown', onHostKeyDown, true);
@@ -110,6 +133,13 @@ async function toggleGallery(tab) {
             host.remove();
             if (shouldRestore && window.__mosaicInitialScroll) {
               window.scrollTo(window.__mosaicInitialScroll.x, window.__mosaicInitialScroll.y);
+            }
+            if (window.__mosaicWasPlaying) {
+              try {
+                const vid = document.querySelector('video.html5-main-video') || document.querySelector('video');
+                vid?.play?.().catch(() => {});
+              } catch {}
+              window.__mosaicWasPlaying = false;
             }
           };
 
