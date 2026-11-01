@@ -6,7 +6,9 @@ import {
   parseRedditResolution,
   pageIdentity,
   isDisallowedMediaUrl,
+  isProfileOrAvatarUrl,
   getInstagramShortcode,
+  getInstagramMediaCode,
   isDirectPlayableVideo
 } from '../utils/mediaHelpers.js';
 import { resolveXVideos } from '../utils/xSyndication.js';
@@ -17,6 +19,12 @@ import {
   advanceTabScroll,
   extractInstagramMainWorldMedia
 } from '../services/scanner.js';
+
+const isUsableInstagramPoster = (url) => {
+  if (!url || typeof url !== 'string' || isDisallowedMediaUrl(url) || isProfileOrAvatarUrl(url) || isDirectPlayableVideo(url)) return false;
+  if (/^data:image\/(?:svg\+xml)/i.test(url) || /^blob:/i.test(url) || /instagram\.com\/(?:p|reel|reels)\//i.test(url)) return false;
+  return /^data:image\/(?:jpeg|jpg|png|webp|avif|gif)/i.test(url) || /^https?:\/\//i.test(url);
+};
 
 const isExtensionValid = () => {
   try {
@@ -65,23 +73,28 @@ export function usePageScanner({
 
     setMedia(prevMedia => {
       const idToIndex = new Map();
+      const aliasToIndex = new Map();
       const redditPostToIndex = new Map();
       const xPostToIndex = new Map();
       const igPostToIndex = new Map();
 
       const getIgPostKey = (item) => {
         if (!item || item.site !== 'instagram') return '';
-        const pId = item.postId || getInstagramShortcode(item.postUrl || item.playbackPage || item.pageUrl || item.url);
+        const pId = item.postId || getInstagramMediaCode(item.postUrl || item.playbackPage || item.pageUrl || item.url);
         if (!pId) return '';
         return item.galleryIndex != null ? `${pId}:${item.galleryIndex}` : pId;
       };
 
       const copyRichMeta = (target, source) => {
         if (source.subreddit && !target.subreddit) target.subreddit = source.subreddit;
-        if (source.author && !target.author) target.author = source.author;
+        if (source.author && (!target.author || target.author === '[deleted]' || target.author === '')) target.author = source.author;
+        if (source.postUrl && (!target.postUrl || /\/(?:search|r\/[^/]+)\/?(?:\?|$)/i.test(target.postUrl))) {
+          target.postUrl = source.postUrl;
+          target.pageUrl = source.pageUrl || source.postUrl;
+        }
         if (source.score && !target.score) target.score = source.score;
         if (source.commentCount && !target.commentCount) target.commentCount = source.commentCount;
-        if (source.tweetText && !target.tweetText) target.tweetText = source.tweetText;
+        if (source.tweetText && (!target.tweetText || source.tweetText.length > target.tweetText.length)) target.tweetText = source.tweetText;
         if (source.authorName && !target.authorName) target.authorName = source.authorName;
         if (source.authorHandle && !target.authorHandle) target.authorHandle = source.authorHandle;
         if (source.likes && !target.likes) target.likes = source.likes;
@@ -99,20 +112,49 @@ export function usePageScanner({
         if (source.galleryIndex != null && target.galleryIndex == null) target.galleryIndex = source.galleryIndex;
         if (source.blogName && !target.blogName) target.blogName = source.blogName;
         if (source.rebloggedFrom && !target.rebloggedFrom) target.rebloggedFrom = source.rebloggedFrom;
-        if (Array.isArray(source.tags) && source.tags.length && (!target.tags || !target.tags.length)) target.tags = source.tags;
-        if (Array.isArray(source.hashtags) && source.hashtags.length && (!target.hashtags || !target.hashtags.length)) target.hashtags = source.hashtags;
+        if (source.site === 'instagram' && Array.isArray(source.tags) && source.tags.length) target.tags = [...new Set([...(target.tags || []), ...source.tags])];
+        else if (Array.isArray(source.tags) && source.tags.length && (!target.tags || !target.tags.length)) target.tags = source.tags;
+        if (Array.isArray(source.hashtags) && source.hashtags.length) target.hashtags = [...new Set([...(target.hashtags || []), ...source.hashtags])];
         if (Array.isArray(source.mentions) && source.mentions.length && (!target.mentions || !target.mentions.length)) target.mentions = source.mentions;
-        if (source.caption && !target.caption) target.caption = source.caption;
+        if (source.site === 'instagram' && source.caption && (!target.caption || source.caption.length > target.caption.length)) {
+          target.caption = source.caption;
+          target.alt = source.caption.slice(0, 120);
+        }
+        if (source.site === 'reddit' && source.caption && (!target.alt || target.alt === '')) target.alt = source.caption.slice(0, 120);
         if (source.postId && !target.postId) target.postId = source.postId;
-        if (source.postUrl && !target.postUrl) target.postUrl = source.postUrl;
-        if (source.poster && !target.poster) target.poster = source.poster;
-        if (source.previewUrl && !target.previewUrl) target.previewUrl = source.previewUrl;
+        if (source.site === 'instagram' && source.postUrl && (!target.postUrl || /instagram\.com\/(?:explore|[^/]+)\/?(?:[?#]|$)/i.test(target.postUrl)) && !/instagram\.com\/(?:p|reel|reels|tv)\//i.test(target.postUrl)) {
+          target.postUrl = source.postUrl;
+          target.pageUrl = source.pageUrl || source.postUrl;
+        }
+        if (source.site === 'instagram' && source.postId && (!target.postId || getInstagramMediaCode(target.postUrl || target.url) !== source.postId)) target.postId = source.postId;
+        if (source.site === 'instagram' && source.author && !target.author) target.author = source.author;
+        if (source.site !== 'instagram' && source.postUrl && !target.postUrl) target.postUrl = source.postUrl;
+        if (source.site === 'instagram') {
+          if (isUsableInstagramPoster(source.poster) && !isUsableInstagramPoster(target.poster)) target.poster = source.poster;
+        } else if (source.poster && !target.poster) target.poster = source.poster;
+        if (source.source && /reddit\.com\/(?:comments|search)\//i.test(target.source || '')) target.source = source.source;
+        if (source.site === 'instagram') {
+          if (isUsableInstagramPoster(source.previewUrl) && !isUsableInstagramPoster(target.previewUrl)) target.previewUrl = source.previewUrl;
+        } else if (source.previewUrl && !target.previewUrl) target.previewUrl = source.previewUrl;
+      };
+
+      const indexItem = (item, index) => {
+        const aliases = new Set([
+          item.id,
+          canonicalMediaId(item.url, item),
+          canonicalMediaId(item.source, item),
+          canonicalMediaId(item.previewUrl, item),
+          canonicalMediaId(item.poster, item),
+          ...(item.fallbackUrls || []).map(url => canonicalMediaId(url, item))
+        ].filter(Boolean));
+        aliases.forEach(alias => aliasToIndex.set(alias, index));
       };
 
       for (let i = 0; i < prevMedia.length; i++) {
         const m = prevMedia[i];
         const mid = m.id || canonicalMediaId(m.url, m);
         idToIndex.set(mid, i);
+        indexItem(m, i);
 
         if (m.site === 'reddit') {
           const isGal = m.isGallery || m.postType === 'gallery' || m.galleryIndex != null;
@@ -234,10 +276,13 @@ export function usePageScanner({
 
         // Check Instagram post/carousel deduplication and upgrades
         if (x.site === 'instagram') {
-          const igKey = getIgPostKey(x);
+            const igKey = getIgPostKey(x);
           if (igKey && igPostToIndex.has(igKey)) {
             const existingIdx = igPostToIndex.get(igKey);
             const existing = nextMedia[existingIdx];
+            const beforeMeta = JSON.stringify([existing.caption, existing.author, existing.postUrl, existing.pageUrl, existing.postId, existing.poster, existing.previewUrl, existing.alt, existing.galleryTotal, existing.galleryIndex, existing.likes, existing.commentCount, existing.mentions, existing.tags, existing.hashtags]);
+            copyRichMeta(existing, x);
+            if (beforeMeta !== JSON.stringify([existing.caption, existing.author, existing.postUrl, existing.pageUrl, existing.postId, existing.poster, existing.previewUrl, existing.alt, existing.galleryTotal, existing.galleryIndex, existing.likes, existing.commentCount, existing.mentions, existing.tags, existing.hashtags])) changed = true;
 
             const existingIsDirectVideo = existing.type === 'video' && isDirectPlayableVideo(existing.url);
             const newIsDirectVideo = x.type === 'video' && isDirectPlayableVideo(x.url);
@@ -248,8 +293,8 @@ export function usePageScanner({
               upgraded.type = 'video';
               upgraded.url = x.url;
               upgraded.source = x.source || x.url;
-              upgraded.poster = x.poster || existing.poster || existing.previewUrl || existing.url || '';
-              upgraded.previewUrl = x.previewUrl || upgraded.poster || existing.previewUrl || '';
+              upgraded.poster = isUsableInstagramPoster(x.poster) ? x.poster : (isUsableInstagramPoster(existing.poster) ? existing.poster : (isUsableInstagramPoster(existing.previewUrl) ? existing.previewUrl : ''));
+              upgraded.previewUrl = isUsableInstagramPoster(x.previewUrl) ? x.previewUrl : upgraded.poster;
               upgraded.playbackPage = '';
               upgraded.unavailable = false;
               upgraded.fallbackUrls = [...new Set([...(x.fallbackUrls || []), ...(existing.fallbackUrls || [])])];
@@ -270,8 +315,8 @@ export function usePageScanner({
               upgraded.type = 'video';
               upgraded.url = x.url;
               upgraded.source = x.source || x.url;
-              upgraded.poster = x.poster || existing.url || existing.previewUrl || '';
-              upgraded.previewUrl = x.previewUrl || upgraded.poster || existing.previewUrl || '';
+              upgraded.poster = isUsableInstagramPoster(x.poster) ? x.poster : (isUsableInstagramPoster(existing.url) ? existing.url : (isUsableInstagramPoster(existing.previewUrl) ? existing.previewUrl : ''));
+              upgraded.previewUrl = isUsableInstagramPoster(x.previewUrl) ? x.previewUrl : upgraded.poster;
               upgraded.playbackPage = x.playbackPage || '';
               upgraded.unavailable = false;
               upgraded.fallbackUrls = x.fallbackUrls || [];
@@ -289,14 +334,16 @@ export function usePageScanner({
             // 3. Existing is video, incoming is image (e.g. thumbnail arrives later) -> Copy poster/preview, do not downgrade
             if (existing.type === 'video' && x.type === 'image') {
               let updated = false;
-              if (!existing.poster && (x.url || x.previewUrl)) {
-                existing.poster = x.url || x.previewUrl;
-                if (!existing.previewUrl) existing.previewUrl = existing.poster;
+              const incomingPoster = isUsableInstagramPoster(x.poster) ? x.poster : (isUsableInstagramPoster(x.previewUrl) ? x.previewUrl : (x.type === 'image' && isUsableInstagramPoster(x.url) ? x.url : ''));
+              if (!isUsableInstagramPoster(existing.poster) && incomingPoster) {
+                existing.poster = incomingPoster;
+                if (!isUsableInstagramPoster(existing.previewUrl)) existing.previewUrl = existing.poster;
                 updated = true;
               }
               if (!existing.width && x.width) { existing.width = Number(x.width); updated = true; }
               if (!existing.height && x.height) { existing.height = Number(x.height); updated = true; }
               copyRichMeta(existing, x);
+              if (beforeMeta !== JSON.stringify([existing.caption, existing.author, existing.postUrl, existing.pageUrl, existing.postId, existing.poster, existing.previewUrl, existing.alt, existing.galleryTotal, existing.galleryIndex, existing.likes, existing.commentCount, existing.mentions, existing.tags, existing.hashtags])) updated = true;
               if (updated) changed = true;
               continue;
             }
@@ -310,7 +357,7 @@ export function usePageScanner({
                 upgraded.width = Number(x.width);
                 upgraded.height = Number(x.height);
                 upgraded.duration = x.duration || existing.duration || 0;
-                if (x.poster && !upgraded.poster) upgraded.poster = x.poster;
+                if (isUsableInstagramPoster(x.poster) && !isUsableInstagramPoster(upgraded.poster)) upgraded.poster = x.poster;
                 if (x.fallbackUrls?.length) {
                   upgraded.fallbackUrls = [...new Set([...(upgraded.fallbackUrls || []), ...x.fallbackUrls])];
                 }
@@ -318,14 +365,15 @@ export function usePageScanner({
                 nextMedia[existingIdx] = upgraded;
                 changed = true;
               } else {
-                if (x.poster && (!existing.poster || existing.poster === existing.url || existing.poster === existing.postUrl)) {
+                if (isUsableInstagramPoster(x.poster) && !isUsableInstagramPoster(existing.poster)) {
                   existing.poster = x.poster;
-                  if (!existing.previewUrl || existing.previewUrl === existing.url || existing.previewUrl === existing.postUrl) {
+                  if (!isUsableInstagramPoster(existing.previewUrl)) {
                     existing.previewUrl = x.poster;
                   }
                   changed = true;
                 }
                 copyRichMeta(existing, x);
+                if (beforeMeta !== JSON.stringify([existing.caption, existing.author, existing.postUrl, existing.pageUrl, existing.postId, existing.poster, existing.previewUrl, existing.alt, existing.galleryTotal, existing.galleryIndex, existing.likes, existing.commentCount, existing.mentions, existing.tags, existing.hashtags])) changed = true;
               }
               continue;
             }
@@ -344,27 +392,39 @@ export function usePageScanner({
                 changed = true;
               } else {
                 copyRichMeta(existing, x);
+                if (beforeMeta !== JSON.stringify([existing.caption, existing.author, existing.postUrl, existing.pageUrl, existing.postId, existing.poster, existing.previewUrl, existing.alt, existing.galleryTotal, existing.galleryIndex, existing.likes, existing.commentCount, existing.mentions, existing.tags, existing.hashtags])) changed = true;
               }
               continue;
             }
 
             // Any other match with the same igKey -> Merge metadata and skip duplicate
-            if (x.poster && (!existing.poster || existing.poster === existing.url || existing.poster === existing.postUrl || (x.poster.length > 500 && (existing.poster || '').length < 100))) {
+            if (isUsableInstagramPoster(x.poster) && !isUsableInstagramPoster(existing.poster)) {
               existing.poster = x.poster;
-              if (!existing.previewUrl || existing.previewUrl === existing.url || existing.previewUrl === existing.postUrl) {
+              if (!isUsableInstagramPoster(existing.previewUrl)) {
                 existing.previewUrl = x.poster;
               }
               changed = true;
             }
             copyRichMeta(existing, x);
+            if (beforeMeta !== JSON.stringify([existing.caption, existing.author, existing.postUrl, existing.pageUrl, existing.postId, existing.poster, existing.previewUrl, existing.alt, existing.galleryTotal, existing.galleryIndex, existing.likes, existing.commentCount, existing.mentions, existing.tags, existing.hashtags])) changed = true;
             continue;
           }
         }
 
-        if (idToIndex.has(id)) {
-          const idx = idToIndex.get(id);
+        const existingIndex = idToIndex.has(id) ? idToIndex.get(id) : aliasToIndex.get(id);
+        if (existingIndex != null) {
+          const idx = existingIndex;
           const updated = { ...nextMedia[idx] };
+          const previousPoster = updated.poster;
+          const previousPreview = updated.previewUrl;
           copyRichMeta(updated, x);
+          if (x.site === 'reddit') {
+            const redditText = x.caption || x.alt || x.pageTitle || '';
+            if (redditText && (!updated.caption || updated.caption.length < redditText.length)) updated.caption = redditText;
+            if (redditText && !updated.alt) updated.alt = redditText.slice(0, 120);
+            if (redditText && !updated.pageTitle) updated.pageTitle = redditText;
+          }
+          if (updated.tweetText !== nextMedia[idx].tweetText || updated.caption !== nextMedia[idx].caption || updated.hashtags !== nextMedia[idx].hashtags || updated.poster !== previousPoster || updated.previewUrl !== previousPreview) changed = true;
           const w = Math.max(updated.width || 0, Number(x.width) || 0);
           const h = Math.max(updated.height || 0, Number(x.height) || 0);
           if (w !== updated.width || h !== updated.height) {
@@ -380,7 +440,16 @@ export function usePageScanner({
             updated.alt = x.alt;
             changed = true;
           }
-          if ((!updated.poster || updated.poster.includes('hqdefault.jpg')) && x.poster && !x.poster.includes('hqdefault.jpg')) {
+          if (x.site === 'instagram') {
+            if (isUsableInstagramPoster(x.poster) && !isUsableInstagramPoster(updated.poster)) {
+              updated.poster = x.poster;
+              changed = true;
+            }
+            if (isUsableInstagramPoster(x.previewUrl) && !isUsableInstagramPoster(updated.previewUrl)) {
+              updated.previewUrl = x.previewUrl;
+              changed = true;
+            }
+          } else if ((!updated.poster || updated.poster.includes('hqdefault.jpg')) && x.poster && !x.poster.includes('hqdefault.jpg')) {
             updated.poster = x.poster;
             changed = true;
           }
@@ -428,6 +497,7 @@ export function usePageScanner({
             }
           }
           nextMedia[idx] = updated;
+          indexItem(updated, idx);
           continue;
         }
 
@@ -442,6 +512,7 @@ export function usePageScanner({
         const newIdx = nextMedia.length;
         nextMedia.push(item);
         idToIndex.set(id, newIdx);
+        indexItem(item, newIdx);
         if (item.site === 'reddit') {
           const isGal = item.isGallery || item.postType === 'gallery' || item.galleryIndex != null;
           if (!isGal) {

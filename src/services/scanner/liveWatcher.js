@@ -72,7 +72,7 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
 
   const extractHashtags = (text) => {
     if (!text || typeof text !== 'string') return [];
-    const matches = text.match(/#([a-zA-Z0-9_\u0080-\uffff]+)/g);
+    const matches = text.match(/#([\p{L}\p{N}_\u200c\u200d]+)/gu);
     if (!matches) return [];
     return [...new Set(matches.map(m => m.slice(1).toLowerCase()))];
   };
@@ -101,7 +101,9 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
     try {
       const path = pathname || location.pathname || '';
       const m = path.match(/\/explore\/tags\/([^\/?#]+)/i) || path.match(/\/tags\/([^\/?#]+)/i);
-      return m ? decodeURIComponent(m[1]) : '';
+      if (m) return decodeURIComponent(m[1]);
+      const query = new URLSearchParams(location.search || '').get('q') || '';
+      return query.startsWith('#') ? query.slice(1) : '';
     } catch {}
     return '';
   };
@@ -140,10 +142,10 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
     if (!container) return '';
     let root = container;
     if (root.matches?.('video')) {
-      root = root.closest('a[href*="/p/"], a[href*="/reel/"], article, div[role="dialog"]') || root.parentElement?.parentElement || root.parentElement || root;
+      root = root.closest('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"], article, div[role="dialog"]') || root.parentElement?.parentElement || root.parentElement || root;
     }
     if (!root.querySelector?.('img, picture source, canvas, [style*="background-image"], [style*="background:"]')) {
-      const up = root.closest?.('a[href*="/p/"], a[href*="/reel/"], article, div[role="dialog"]');
+      const up = root.closest?.('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"], article, div[role="dialog"]');
       if (up) root = up;
     }
 
@@ -526,7 +528,7 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
           const absolute = new URL(url, location.href).href;
           if (!/^https?:|^blob:|^data:image\/(?!svg)/i.test(absolute) || isDisallowedMediaUrl(absolute) || isProfileOrAvatarUrl(absolute)) return;
           const postUrl = meta.postUrl ||
-            (isInstagram ? (node?.closest?.('article')?.querySelector?.('a[href*="/p/"], a[href*="/reel/"]')?.href || node?.closest?.('a[href*="/p/"], a[href*="/reel/"]')?.href || '') : (node?.closest?.('article,[data-testid="tweet"]')?.querySelector?.('a[href*="/status/"]')?.href ||
+            (isInstagram ? (node?.closest?.('article')?.querySelector?.('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]')?.href || node?.closest?.('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]')?.href || '') : (node?.closest?.('article,[data-testid="tweet"]')?.querySelector?.('a[href*="/status/"]')?.href ||
             node?.closest?.('article,[data-testid="tweet"]')?.querySelector?.('time')?.closest?.('a')?.href ||
             (isX && location.pathname.includes('/status/') ? location.href.split('?')[0] : '')));
           const directXVideo = isX && type === 'video' && new URL(absolute).hostname === 'video.twimg.com' && /\.mp4(?:[?#]|$)/i.test(absolute);
@@ -865,14 +867,14 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
             if (isYouTube) continue;
             if (isInstagram) {
               if (el.closest('header, nav, [role="navigation"]') || /avatar|profile picture/i.test(el.getAttribute('alt') || '') || el.getAttribute('alt') === 'Avatar') continue;
-              const gridLink = el.closest('a[href*="/p/"], a[href*="/reel/"]');
+              const gridLink = el.closest('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]');
               if (gridLink) {
                 if (gridLink.querySelector('video')) continue;
                 const isReel = /\/reel\//i.test(gridLink.href || '') ||
                   Boolean(gridLink.querySelector('svg[aria-label="Reel"], svg[aria-label="Clip"], span[aria-label="Reel"], [aria-label*="reel" i], [aria-label*="clip" i], [aria-label*="video" i]'));
                 if (isReel) {
                   const pId = getInstagramShortcode(gridLink.href);
-                  const pUrl = pId ? `https://www.instagram.com/p/${pId}/` : gridLink.href;
+                  const pUrl = pId ? `https://www.instagram.com/reel/${pId}/` : gridLink.href;
                   add(src, 'video', el, src, {
                     site: 'instagram',
                     postId: pId,
@@ -907,9 +909,15 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
             if (isReddit) {
               const post = el.closest('shreddit-post, shreddit-search-post, [data-testid="search-post-unit"], article[data-testid="post-container"]');
               if (!post) continue;
-              const permalink = post.getAttribute?.('permalink') || post.querySelector?.('a[href*="/comments/"]')?.getAttribute('href') || '';
-              const postUrl = permalink ? new URL(permalink, location.href).href : location.href;
-              const postId = post.id || post.getAttribute?.('id') || '';
+              const permalink = post.getAttribute?.('permalink') || post.querySelector?.('a[href*="/comments/"]')?.getAttribute('href') || post.querySelector?.('a[slot="post-title"], a[slot="full-post-link"]')?.getAttribute('href') || '';
+              const postId = (post.id || post.getAttribute?.('id') || '').replace(/^t3_/, '') || permalink.match(/\/comments\/([a-z0-9]+)/i)?.[1] || location.pathname.match(/\/comments\/([a-z0-9]+)/i)?.[1] || '';
+              const postUrl = permalink ? new URL(permalink, location.href).href : postId ? `https://www.reddit.com/comments/${postId}/` : location.href;
+              const title = post.getAttribute?.('post-title') || post.querySelector?.('[slot="title"]')?.textContent?.trim() || post.querySelector?.('h1, h2, h3')?.textContent?.trim() || '';
+              const authorPath = post.querySelector?.('a[href*="/user/"], a[href*="/u/"], a[slot="author-name"]')?.getAttribute('href') || '';
+              const authorFromPath = authorPath.match(/\/(?:user|u)\/([^/?#]+)/i)?.[1] || '';
+              const authorAttr = post.getAttribute?.('author') || '';
+              const author = authorFromPath || (/^[a-zA-Z0-9_-]{2,24}$/.test(authorAttr) && !/^(?:deleted|automoderator)$/i.test(authorAttr) ? authorAttr : '');
+              const subreddit = post.getAttribute?.('subreddit-prefixed-name') || post.getAttribute?.('subreddit-name') || '';
               const content = post.getAttribute?.('content-href') || post.querySelector?.('a[slot="content"], a[slot="thumbnail"]')?.getAttribute('href') || '';
               const domain = post.getAttribute?.('domain') || '';
 
@@ -919,6 +927,11 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
                 const mainUrl = ext.directUrl || ext.fallbackUrls[0] || ext.embedUrl || poster || postUrl;
                 add(mainUrl, 'video', el, poster, {
                   postId,
+                  author,
+                  subreddit,
+                  caption: title,
+                  alt: title,
+                  pageTitle: title,
                   postUrl,
                   site: 'reddit',
                   playbackPage: ext.embedUrl,
@@ -936,11 +949,11 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
               if (isVidPost) continue;
               if (!/(?:i|preview|external-preview)\.redd\.it/i.test(src)) continue;
               if (/^https?:\/\/(?:i|preview)\.redd\.it\//i.test(content)) {
-                add(content, 'image', post, '', { postId, postUrl, site: 'reddit' });
+                add(content, 'image', post, '', { postId, author, subreddit, caption: title, alt: title, pageTitle: title, postUrl, site: 'reddit' });
                 continue;
               }
               if (!/^(?:https?:)?\/\/i\.redd\.it\//i.test(src) && post.querySelector('img[src*="i.redd.it"]')) continue;
-              add(src, 'image', el, '', { postId, postUrl, site: 'reddit' });
+              add(src, 'image', el, '', { postId, author, subreddit, caption: title, alt: title, pageTitle: title, postUrl, site: 'reddit' });
               continue;
             }
             const isXThumb = (host === 'x.com' || host.endsWith('.x.com') || host.includes('twitter.com')) && /ext_tw_video_thumb|tweet_video_thumb|amplify_video_thumb/i.test(src);
@@ -961,6 +974,7 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
             const permalink = post?.getAttribute('permalink') || '';
             const postUrl = permalink ? new URL(permalink, location.href).href : location.href;
             const postId = post ? (post.id || post.getAttribute('id') || '') : '';
+            const title = post?.getAttribute('post-title') || post?.querySelector?.('[slot="title"]')?.textContent?.trim() || post?.querySelector?.('h1, h2, h3')?.textContent?.trim() || '';
             chrome.runtime.sendMessage({
               type: 'mosaic-live-media',
               tabId: targetTabId,
@@ -970,6 +984,7 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
                 previewUrl: poster,
                 poster,
                 alt: post?.getAttribute('post-title') || '',
+                caption: title,
                 pageUrl: location.href,
                 pageTitle: document.title,
                 width: media.width,
@@ -999,22 +1014,24 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
             if (host.includes('reddit.com') && el.closest('shreddit-post')) continue;
             if (isInstagram) {
               const article = el.closest('article') || el.closest('div[role="dialog"]');
-              const postLink = article?.querySelector('a[href*="/p/"], a[href*="/reel/"]') || el.closest('a[href*="/p/"], a[href*="/reel/"]');
+              const postLink = article?.querySelector('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]') || el.closest('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]');
               const postId = getInstagramShortcode(postLink?.href || location.href);
-              const postUrl = postId ? `https://www.instagram.com/p/${postId}/` : (postLink?.href || location.href);
-              const container = el.closest('a[href*="/p/"], a[href*="/reel/"], article, div[role="dialog"]') || el.parentElement?.parentElement || article;
-              const poster = el.poster || el.getAttribute('poster') || extractInstagramPoster(container);
+              const postUrl = postId ? `https://www.instagram.com/${/\/reels?\//i.test(postLink?.href || location.pathname) ? 'reel' : 'p'}/${postId}/` : (postLink?.href || location.href);
+              const poster = el.poster || el.getAttribute('poster') || el.parentElement?.querySelector?.('img')?.currentSrc || el.parentElement?.querySelector?.('img')?.src || '';
               let vidSrc = (!el.currentSrc?.startsWith('blob:') && el.currentSrc) || (!el.src?.startsWith('blob:') && el.src) || '';
               const profileAuthor = getInstagramProfileFromPath();
-              const authorEl = article?.querySelector('header a[role="link"], header a[href^="/"], a[href^="/"][tabindex="0"]');
-              const author = authorEl?.textContent?.trim() || authorEl?.getAttribute('href')?.replace(/^\/|\/$/g, '') || profileAuthor || '';
-              const captionEl = article?.querySelector('h1, span[dir="auto"], [data-testid="post-comment-root"]');
-              const caption = captionEl?.textContent?.trim() || '';
+              const authorEl = article?.querySelector('header a[href^="/"], a[role="link"][href^="/"]');
+              const authorPath = authorEl?.getAttribute('href') || '';
+              const authorFromPath = authorPath.match(/^\/([^/?#]+)\/?$/)?.[1] || '';
+              const authorText = authorEl?.textContent?.trim() || '';
+              const author = /^[a-zA-Z0-9._]{1,30}$/.test(authorFromPath) ? authorFromPath : (/^[a-zA-Z0-9._]{1,30}$/.test(authorText) ? authorText : profileAuthor || '');
+              const captionEl = article?.querySelector('[data-testid="post-comment-root"]') || article?.querySelector('h1') || article?.querySelector('[data-testid*="caption" i]');
+              const caption = (captionEl?.innerText || captionEl?.textContent || '').replace(/\s*more\s*$/i, '').trim();
               const tagFromPath = getInstagramTagFromPath();
               const hashtags = extractHashtags(caption);
-              if (tagFromPath && !hashtags.includes(tagFromPath)) hashtags.push(tagFromPath);
+              if (tagFromPath && !hashtags.some(tag => tag.toLowerCase() === tagFromPath.toLowerCase())) hashtags.push(tagFromPath.toLowerCase());
               const mentions = extractMentions(caption);
-              add(vidSrc || poster || postUrl, 'video', el, poster, {
+              add(vidSrc || postUrl, 'video', el, poster, {
                 site: 'instagram',
                 postId,
                 author,
@@ -1024,7 +1041,7 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
                 hashtags,
                 mentions,
                 tags: hashtags,
-                source: vidSrc || poster,
+                source: vidSrc,
                 playbackPage: vidSrc ? '' : postUrl
               });
 

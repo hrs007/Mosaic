@@ -54,21 +54,30 @@ export default function ViewerToolsDrawer({
   const isX = item.site === 'x';
   const isInstagram = item.site === 'instagram';
   const altAuthor = item.alt ? ((item.alt.match(/(?:Photo|Video)\s+by\s+([^.]+?)\s+on/i)?.[1]) || (item.alt.match(/by\s+@?([a-zA-Z0-9_\.]+)/i)?.[1]) || '') : '';
-  const igAuthor = item.author || altAuthor;
+  const rawIgAuthor = item.author || altAuthor || '';
+  const igAuthor = rawIgAuthor.match(/instagram\.com\/([^/?#]+)/i)?.[1] || rawIgAuthor.replace(/^@/, '');
   const igLikes = item.likes != null ? item.likes : (item.likeCount != null ? item.likeCount : '');
   const hasIgLikes = (typeof igLikes === 'number' && igLikes > 0) || (typeof igLikes === 'string' && igLikes && !/^(?:0|0\s*likes?)$/i.test(igLikes.trim()));
   const igComments = item.commentCount != null ? item.commentCount : (item.comments != null ? item.comments : '');
   const hasIgComments = (typeof igComments === 'number' && igComments > 0) || (typeof igComments === 'string' && igComments && !/^(?:0|0\s*comments?)$/i.test(igComments.trim()));
   const igHashtags = Array.isArray(item.hashtags) && item.hashtags.length ? item.hashtags : extractHashtags(item.caption || item.alt || '');
+  const xHashtags = Array.isArray(item.hashtags) && item.hashtags.length ? item.hashtags : extractHashtags(item.tweetText || item.caption || item.alt || '');
 
   const subreddit = item.subreddit || '';
-  const redditAuthor = item.author || '';
+  const redditAuthor = item.author || item.authorHandle || '';
+  const redditUsername = (() => {
+    const value = String(redditAuthor).trim();
+    const fromUrl = value.match(/reddit\.com\/(?:user|u)\/([^/?#]+)/i)?.[1];
+    const username = (fromUrl || value.replace(/^u\//i, '').replace(/^@/, '')).trim();
+    return /^[a-zA-Z0-9_-]{2,24}$/.test(username) && !/^(?:deleted|automoderator)$/i.test(username) ? username : '';
+  })();
   const redditScore = item.score || '';
   const redditComments = item.commentCount || '';
-  const postTitle = item.pageTitle || item.alt || '';
+  const postTitle = item.caption || item.alt || (isReddit ? item.pageTitle : '') || '';
 
   const authorName = item.authorName || '';
   const authorHandle = item.authorHandle || '';
+  const cleanXHandle = authorHandle.replace(/^@/, '');
   const tweetText = item.tweetText || '';
   const likes = item.likes || 0;
   const replies = item.replies || 0;
@@ -111,19 +120,19 @@ export default function ViewerToolsDrawer({
                   {subreddit && (
                     <button
                       className="meta-chip subreddit-chip"
-                      onClick={() => window.open(`https://reddit.com/${subreddit.replace(/^\/?/, '')}`, '_blank', 'noopener')}
-                      title="Open Subreddit in new tab"
+                      onClick={() => onNavigateToInstagram ? onNavigateToInstagram(`https://www.reddit.com/${subreddit.replace(/^\/?/, '')}`) : window.open(`https://www.reddit.com/${subreddit.replace(/^\/?/, '')}`, '_blank', 'noopener')}
+                      title="Open Subreddit in Mosaic"
                     >
                       {subreddit.startsWith('r/') ? subreddit : `r/${subreddit}`} ↗
                     </button>
                   )}
-                  {redditAuthor && (
+                  {redditUsername && (
                     <button
                       className="meta-chip author-chip"
-                      onClick={() => window.open(`https://reddit.com/user/${redditAuthor.replace(/^u\//, '')}`, '_blank', 'noopener')}
-                      title="Open Author Profile in new tab"
+                      onClick={() => onNavigateToInstagram ? onNavigateToInstagram(`https://www.reddit.com/user/${encodeURIComponent(redditUsername)}/`) : window.open(`https://www.reddit.com/user/${encodeURIComponent(redditUsername)}/`, '_blank', 'noopener')}
+                      title="Open Author Profile in Mosaic"
                     >
-                      u/{redditAuthor.replace(/^u\//, '')} ↗
+                      u/{redditUsername} ↗
                     </button>
                   )}
                   {redditScore && (
@@ -150,6 +159,11 @@ export default function ViewerToolsDrawer({
                 )}
 
                 <div className="drawer-btn-row">
+                  {subreddit && <button className="drawer-action-btn" onClick={() => onNavigateToInstagram ? onNavigateToInstagram(`https://www.reddit.com/${subreddit.replace(/^\/?/, '')}`) : window.open(`https://www.reddit.com/${subreddit.replace(/^\/?/, '')}`, '_blank', 'noopener')}>Open Subreddit in Mosaic ↗</button>}
+                  {redditUsername && <button className="drawer-action-btn" onClick={() => onNavigateToInstagram ? onNavigateToInstagram(`https://www.reddit.com/user/${encodeURIComponent(redditUsername)}/`) : window.open(`https://www.reddit.com/user/${encodeURIComponent(redditUsername)}/`, '_blank', 'noopener')}>Open Profile in Mosaic ↗</button>}
+                </div>
+
+                <div className="drawer-btn-row">
                   {postTitle && (
                     <button
                       className="drawer-action-btn"
@@ -162,7 +176,7 @@ export default function ViewerToolsDrawer({
                   {postOrPage && (
                     <button
                       className="drawer-action-btn primary"
-                      onClick={() => window.open(postOrPage, '_blank', 'noopener')}
+                      onClick={() => onNavigateToInstagram ? onNavigateToInstagram(postOrPage) : window.open(postOrPage, '_blank', 'noopener')}
                     >
                       <ExternalLinkIcon size={13} />
                       <span>Open Thread</span>
@@ -181,11 +195,11 @@ export default function ViewerToolsDrawer({
                   {authorHandle ? (
                     <button
                       className="x-author-btn"
-                      onClick={() => window.open(`https://x.com/${authorHandle}`, '_blank', 'noopener')}
-                      title={`Open @${authorHandle} on X`}
+                      onClick={() => onNavigateToInstagram ? onNavigateToInstagram(`https://x.com/${encodeURIComponent(cleanXHandle)}`) : window.open(`https://x.com/${encodeURIComponent(cleanXHandle)}`, '_blank', 'noopener')}
+                      title={`Open @${cleanXHandle} on X in Mosaic`}
                     >
                       <span className="x-author-name">{authorName || authorHandle}</span>
-                      <span className="x-author-handle">@{authorHandle} ↗</span>
+                      <span className="x-author-handle">@{cleanXHandle} ↗</span>
                     </button>
                   ) : authorName ? (
                     <span className="x-author-name">{authorName}</span>
@@ -200,6 +214,20 @@ export default function ViewerToolsDrawer({
                 {tweetText && (
                   <div className="x-tweet-caption">
                     {tweetText}
+                  </div>
+                )}
+
+                {xHashtags.length > 0 && (
+                  <div className="reddit-meta-chips">
+                    {xHashtags.slice(0, 5).map(tag => {
+                      const cleanTag = String(tag).replace(/^#/, '');
+                      const url = `https://x.com/hashtag/${encodeURIComponent(cleanTag)}`;
+                      return (
+                        <button key={`x-${cleanTag}`} className="meta-chip instagram-tag-chip" onClick={() => onNavigateToInstagram ? onNavigateToInstagram(url) : window.open(url, '_blank', 'noopener')} title={`Explore #${cleanTag} on X in Mosaic`}>
+                          #{cleanTag} ↗
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
 

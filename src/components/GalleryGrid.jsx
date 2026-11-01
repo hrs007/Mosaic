@@ -74,8 +74,9 @@ export default function GalleryGrid() {
         const video = entry.target;
         if (!video) return;
         const isGif = video.dataset.isGif === 'true';
+        const isCardHovered = video.closest('.media-thumb')?.matches(':hover') || false;
         if (entry.isIntersecting && !isViewerOpen) {
-          if (prefs.autoplayMode === 'grid' || isGif) {
+          if (prefs.autoplayMode === 'grid' || isGif || (prefs.autoplayMode === 'hover' && isCardHovered)) {
             video.muted = true;
             video.defaultMuted = true;
             video.play().catch(() => {});

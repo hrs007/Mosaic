@@ -41,6 +41,19 @@ export function getInstagramShortcode(url) {
   return m ? m[1] : '';
 }
 
+export function getInstagramMediaCode(url) {
+  const shortcode = getInstagramShortcode(url);
+  if (shortcode) return shortcode;
+  if (!url || typeof url !== 'string') return '';
+  try {
+    const parsed = new URL(url);
+    if (!/instagram\.com$/i.test(parsed.hostname) && !/\.instagram\.com$/i.test(parsed.hostname)) return '';
+    return parsed.pathname.match(/^\/(?:reel|reels)\/([^/]+)/i)?.[1] || '';
+  } catch {
+    return '';
+  }
+}
+
 export function extractHashtags(text) {
   if (!text || typeof text !== 'string') return [];
   const matches = text.match(/#([a-zA-Z0-9_\u0080-\uffff]+)/g);
@@ -57,7 +70,10 @@ export function extractMentions(text) {
 
 export function getInstagramProfileUrl(username) {
   if (!username) return 'https://www.instagram.com/';
-  const clean = String(username).replace(/^[@\/]+|[\/]+$/g, '');
+  const raw = String(username).trim();
+  const fromUrl = raw.match(/instagram\.com\/([^/?#]+)/i)?.[1] || '';
+  const clean = (fromUrl || raw).replace(/^[@\/]+|[\/]+$/g, '');
+  if (!/^[a-zA-Z0-9._]{1,30}$/.test(clean)) return 'https://www.instagram.com/';
   return `https://www.instagram.com/${encodeURIComponent(clean)}/`;
 }
 
@@ -78,14 +94,22 @@ export function getInstagramTagFromPath(pathname = '') {
   try {
     const path = pathname || (typeof location !== 'undefined' ? location.pathname : '');
     const m = path.match(/\/explore\/tags\/([^\/?#]+)/i) || path.match(/\/tags\/([^\/?#]+)/i);
-    return m ? decodeURIComponent(m[1]) : '';
+    if (m) return decodeURIComponent(m[1]);
+    if (!pathname && typeof location !== 'undefined') {
+      const query = new URLSearchParams(location.search || '').get('q') || '';
+      if (query.startsWith('#')) return query.slice(1);
+    }
+    return '';
   } catch {}
   return '';
 }
 
 export function getInstagramHashtagUrl(tag) {
   if (!tag) return 'https://www.instagram.com/';
-  const clean = String(tag).replace(/^[#\/]+|[\/]+$/g, '');
+  const raw = String(tag).trim();
+  const fromUrl = raw.match(/instagram\.com\/(?:explore\/)?tags\/([^/?#]+)/i)?.[1] || '';
+  const clean = (fromUrl || raw).replace(/^[#\/]+|[\/]+$/g, '');
+  if (!/^[\p{L}\p{N}_\.]+$/u.test(clean)) return 'https://www.instagram.com/';
   return `https://www.instagram.com/explore/tags/${encodeURIComponent(clean)}/`;
 }
 

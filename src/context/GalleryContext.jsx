@@ -165,20 +165,24 @@ export function GalleryProvider({ children }) {
     } catch {}
   }, [tabId, prefs.exitScroll]);
 
-  // Navigate Instagram tab to hashtag or profile and auto-open Mosaic in extension view
-  const navigateToInstagram = useCallback((targetUrl, options = {}) => {
+  // Navigate to a social destination and reopen Mosaic on the same tab.
+  const navigateToSocial = useCallback((targetUrl, options = {}) => {
     if (!targetUrl) return;
     const keepGalleryOpen = options.keepGalleryOpen !== false;
 
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime?.id && chrome.runtime?.sendMessage) {
-        chrome.runtime.sendMessage({
-          type: 'mosaic-navigate-to-instagram',
+        const message = {
+          type: 'mosaic-navigate-social',
           url: targetUrl,
-          tabId,
+          tabId: tabId || undefined,
           keepGalleryOpen
+        };
+        chrome.runtime.sendMessage(message, () => {
+          if (!chrome.runtime.lastError) return;
+          window.open(targetUrl, '_blank', 'noopener');
         });
-        showToast('Navigating Instagram in extension view…');
+        showToast('Opening destination in Mosaic…');
         return;
       }
     } catch {}
@@ -249,7 +253,8 @@ export function GalleryProvider({ children }) {
     clearFavorites: downloadsState.clearFavorites,
     clearLibrary: downloadsState.clearLibrary,
     closeGallery,
-    navigateToInstagram,
+    navigateToInstagram: navigateToSocial,
+    navigateToSocial,
     isAdvancing: scannerState.isAdvancing,
     hasReachedEnd: scannerState.hasReachedEnd
   }), [
@@ -266,7 +271,7 @@ export function GalleryProvider({ children }) {
     scannerState.scanStatus, scannerState.loading, scannerState.scanPage, scannerState.scanLiveNow,
     scannerState.advanceSourcePage, scannerState.checkGalleryFill, scannerState.onGalleryScroll,
     downloadsState.toggleFavorite, downloadsState.downloadItem, downloadsState.removeSavedFile,
-    downloadsState.clearFavorites, downloadsState.clearLibrary, closeGallery, navigateToInstagram,
+    downloadsState.clearFavorites, downloadsState.clearLibrary, closeGallery, navigateToSocial,
     scannerState.isAdvancing, scannerState.hasReachedEnd
   ]);
 

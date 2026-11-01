@@ -165,7 +165,12 @@ export function useGalleryFilters({ media, savedMedia, savedFiles, prefs, onFilt
     if (prefs.hideDuplicates) {
       const seen = new Set();
       list = list.filter(x => {
-        const key = `${x.width}x${x.height}:${x.url.split('?')[0].replace(/[-_](\d+x\d+|\d+)(?=\.[a-z]+$)/i, '')}`;
+        const rawUrl = x.url || x.source || x.previewUrl || '';
+        const normalizedUrl = rawUrl.split('#')[0].split('?')[0]
+          .replace(/\/s\d+x\d+\//gi, '/')
+          .replace(/[-_](\d+x\d+|\d+)(?=\.[a-z0-9]+$)/i, '');
+        const dimensions = x.width && x.height ? `${x.width}x${x.height}:` : '';
+        const key = `${x.site || ''}:${x.type || ''}:${dimensions}${normalizedUrl || x.id}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;

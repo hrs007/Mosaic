@@ -16,6 +16,11 @@ export function extractInstagramMainWorldMedia() {
     }
   };
 
+  const isPosterUrl = (url) => Boolean(url && typeof url === 'string' &&
+    !/^blob:|\.(?:mp4|webm|mov)(?:[?#]|$)|\/o1\/v\/|\/v\/t(?:50|66)\./i.test(url) &&
+    !/instagram\.com\/(?:p|reel|reels)\//i.test(url) &&
+    (/^data:image\/(?:jpeg|jpg|png|webp|avif|gif)/i.test(url) || /^https?:\/\//i.test(url)));
+
   const getInstagramShortcode = (url) => {
     if (!url) return '';
     const m = String(url).match(/(?:instagram\.com\/(?:p|reel|reels)\/|\/p\/|\/reel\/|\/reels\/)([a-zA-Z0-9_-]+)/i);
@@ -24,7 +29,7 @@ export function extractInstagramMainWorldMedia() {
 
   const extractHashtags = (text) => {
     if (!text || typeof text !== 'string') return [];
-    const matches = text.match(/#([a-zA-Z0-9_\u0080-\uffff]+)/g);
+    const matches = text.match(/#([\p{L}\p{N}_\u200c\u200d]+)/gu);
     if (!matches) return [];
     return [...new Set(matches.map(h => h.replace(/^#/, '')))];
   };
@@ -81,7 +86,9 @@ export function extractInstagramMainWorldMedia() {
   const getTagFromPath = () => {
     try {
       const m = location.pathname.match(/\/explore\/tags\/([^\/?#]+)/i) || location.pathname.match(/\/tags\/([^\/?#]+)/i);
-      return m ? decodeURIComponent(m[1]) : '';
+      if (m) return decodeURIComponent(m[1]);
+      const query = new URLSearchParams(location.search || '').get('q') || '';
+      return query.startsWith('#') ? query.slice(1) : '';
     } catch {}
     return '';
   };
@@ -90,7 +97,25 @@ export function extractInstagramMainWorldMedia() {
   const tagFromPath = getTagFromPath();
 
   const foundItems = [];
-  const seenPostKeys = new Set();
+  const itemKey = (item) => item.postId ? (item.galleryIndex != null ? `${item.postId}:${item.galleryIndex}` : item.postId) : item.url;
+  const addOrMergeItem = (item) => {
+    const key = itemKey(item);
+    const existing = foundItems.find(candidate => itemKey(candidate) === key);
+    if (!existing) {
+      foundItems.push(item);
+      return;
+    }
+    for (const [field, value] of Object.entries(item)) {
+      if ((existing[field] == null || existing[field] === '') && value != null && value !== '') existing[field] = value;
+    }
+    if (item.caption && (!existing.caption || item.caption.length > existing.caption.length)) existing.caption = item.caption;
+    if (isPosterUrl(item.poster) && !isPosterUrl(existing.poster)) existing.poster = item.poster;
+    if (existing.type === 'video' && isPosterUrl(item.previewUrl)) {
+      if (!isPosterUrl(existing.poster)) existing.poster = item.previewUrl;
+      if (!isPosterUrl(existing.previewUrl)) existing.previewUrl = item.previewUrl;
+    }
+    if (item.type === 'video' && existing.type !== 'video') Object.assign(existing, item);
+  };
   const checkedObjects = new WeakSet();
   let inspectCount = 0;
 
@@ -102,14 +127,14 @@ export function extractInstagramMainWorldMedia() {
     const username = typeof user.username === 'string' ? user.username : (meta.author || profileAuthor || '');
     const caption = typeof obj.caption === 'string'
       ? obj.caption
-      : (obj.caption?.text || obj.edge_media_to_caption?.edges?.[0]?.node?.text || meta.caption || '');
+      : (obj.caption?.text || obj.edge_media_to_caption?.edges?.[0]?.node?.text || obj.caption_text || obj.accessibility_caption || obj.accessibilityCaption || meta.caption || '');
     const rawLikes = obj.like_count != null ? obj.like_count : (obj.edge_liked_by?.count != null ? obj.edge_liked_by.count : (obj.edge_media_preview_like?.count != null ? obj.edge_media_preview_like.count : meta.likes));
     const likes = (rawLikes != null && Number(rawLikes) > 0) ? Number(rawLikes) : (meta.likes || undefined);
     const rawComments = obj.comment_count != null ? obj.comment_count : (obj.edge_media_to_comment?.count != null ? obj.edge_media_to_comment.count : meta.commentCount);
     const comments = (rawComments != null && Number(rawComments) > 0) ? Number(rawComments) : (meta.commentCount || undefined);
-    const postUrl = code ? `https://www.instagram.com/p/${code}/` : (meta.postUrl || location.href);
+    const postUrl = code ? `https://www.instagram.com/${/\/reels?\//i.test(meta.postUrl || location.pathname) ? 'reel' : 'p'}/${code}/` : (meta.postUrl || location.href);
     const hashtags = extractHashtags(caption);
-    if (tagFromPath && !hashtags.includes(tagFromPath)) hashtags.push(tagFromPath);
+    if (tagFromPath && !hashtags.some(tag => tag.toLowerCase() === tagFromPath.toLowerCase())) hashtags.push(tagFromPath.toLowerCase());
     const mentions = extractMentions(caption);
 
     // Check carousel_media
@@ -193,7 +218,7 @@ export function extractInstagramMainWorldMedia() {
         url: mainUrl,
         source: bestVid || poster,
         poster: poster || '',
-        previewUrl: poster || bestVid || '',
+        previewUrl: poster || '',
         fallbackUrls: fallbacks,
         width: vW || (obj.dimensions?.width) || 0,
         height: vH || (obj.dimensions?.height) || 0,
@@ -274,33 +299,15 @@ export function extractInstagramMainWorldMedia() {
 
     if (value.video_versions || value.videoVersions || value.video_url || value.videoUrl || value.dash_manifest || value.progressive_download_url || value.image_versions2 || value.carousel_media || value.edge_sidecar_to_children || (value.media_type && (value.video_url || value.display_url))) {
       const item = parseMediaObj(value);
-      if (item) {
-        const itemKey = item.postId ? (item.galleryIndex != null ? `${item.postId}:${item.galleryIndex}` : item.postId) : item.url;
-        if (!seenPostKeys.has(itemKey)) {
-          seenPostKeys.add(itemKey);
-          foundItems.push(item);
-        }
-      }
+      if (item) addOrMergeItem(item);
     } else if (Array.isArray(value.items)) {
       value.items.forEach(it => {
         const item = parseMediaObj(it);
-        if (item) {
-          const itemKey = item.postId ? (item.galleryIndex != null ? `${item.postId}:${item.galleryIndex}` : item.postId) : item.url;
-          if (!seenPostKeys.has(itemKey)) {
-            seenPostKeys.add(itemKey);
-            foundItems.push(item);
-          }
-        }
+        if (item) addOrMergeItem(item);
       });
     } else if (value.post || value.media || value.item) {
       const item = parseMediaObj(value.post || value.media || value.item);
-      if (item) {
-        const itemKey = item.postId ? (item.galleryIndex != null ? `${item.postId}:${item.galleryIndex}` : item.postId) : item.url;
-        if (!seenPostKeys.has(itemKey)) {
-          seenPostKeys.add(itemKey);
-          foundItems.push(item);
-        }
-      }
+      if (item) addOrMergeItem(item);
     }
 
     for (const key of Object.keys(value)) {
@@ -313,7 +320,7 @@ export function extractInstagramMainWorldMedia() {
   const candidateNodes = [
     document.getElementById('react-root'),
     document.querySelector('main'),
-    ...document.querySelectorAll('article, a[href*="/p/"], a[href*="/reel/"], div[role="dialog"], video')
+    ...document.querySelectorAll('article, a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"], div[role="dialog"], video')
   ].filter(Boolean);
 
   for (const node of candidateNodes) {
@@ -336,17 +343,18 @@ export function extractInstagramMainWorldMedia() {
   // 2. Also inspect playing / buffered video elements in DOM
   const videos = [...document.querySelectorAll('video')];
   for (const vid of videos) {
-    const postLink = vid.closest('article, div[role="dialog"]')?.querySelector('a[href*="/p/"], a[href*="/reel/"]') || vid.closest('a[href*="/p/"], a[href*="/reel/"]');
+    const postLink = vid.closest('article, div[role="dialog"]')?.querySelector('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]') || vid.closest('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]');
     const postId = getInstagramShortcode(postLink?.href || location.href);
     const existing = foundItems.find(it => it.postId === postId && it.type === 'video');
-    if (!existing || !existing.poster) {
+    if (!existing || !isPosterUrl(existing.poster)) {
       const snap = captureVideoFrame(vid);
       if (snap) {
         if (existing) {
           existing.poster = snap;
-          if (!existing.previewUrl) existing.previewUrl = snap;
+          if (!isPosterUrl(existing.previewUrl)) existing.previewUrl = snap;
         } else if (postId) {
-          const postUrl = `https://www.instagram.com/p/${postId}/`;
+          const reelLink = vid.closest('article, div[role="dialog"]')?.querySelector('a[href*="/reel/"], a[href*="/reels/"]') || vid.closest('a[href*="/reel/"], a[href*="/reels/"]');
+          const postUrl = `https://www.instagram.com/${/\/reels?\//i.test(reelLink?.href || location.pathname) ? 'reel' : 'p'}/${postId}/`;
           const item = {
             type: 'video',
             url: postUrl,

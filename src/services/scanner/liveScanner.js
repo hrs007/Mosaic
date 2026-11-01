@@ -231,7 +231,7 @@ export function scanLiveNowInTab() {
 
   const extractHashtags = (text) => {
     if (!text || typeof text !== 'string') return [];
-    const matches = text.match(/#([a-zA-Z0-9_\u0080-\uffff]+)/g);
+    const matches = text.match(/#([\p{L}\p{N}_\u200c\u200d]+)/gu);
     if (!matches) return [];
     return [...new Set(matches.map(m => m.slice(1).toLowerCase()))];
   };
@@ -260,7 +260,9 @@ export function scanLiveNowInTab() {
     try {
       const path = pathname || location.pathname || '';
       const m = path.match(/\/explore\/tags\/([^\/?#]+)/i) || path.match(/\/tags\/([^\/?#]+)/i);
-      return m ? decodeURIComponent(m[1]) : '';
+      if (m) return decodeURIComponent(m[1]);
+      const query = new URLSearchParams(location.search || '').get('q') || '';
+      return query.startsWith('#') ? query.slice(1) : '';
     } catch {}
     return '';
   };
@@ -299,10 +301,10 @@ export function scanLiveNowInTab() {
     if (!container) return '';
     let root = container;
     if (root.matches?.('video')) {
-      root = root.closest('a[href*="/p/"], a[href*="/reel/"], article, div[role="dialog"]') || root.parentElement?.parentElement || root.parentElement || root;
+      root = root.closest('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"], article, div[role="dialog"]') || root.parentElement?.parentElement || root.parentElement || root;
     }
     if (!root.querySelector?.('img, picture source, canvas, [style*="background-image"], [style*="background:"]')) {
-      const up = root.closest?.('a[href*="/p/"], a[href*="/reel/"], article, div[role="dialog"]');
+      const up = root.closest?.('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"], article, div[role="dialog"]');
       if (up) root = up;
     }
 
@@ -412,10 +414,15 @@ export function scanLiveNowInTab() {
     }
   };
 
-  const igVariantCache = new WeakMap();
+  const isInstagramPosterUrl = (url) => {
+    if (!url || typeof url !== 'string' || isDisallowedMediaUrl(url) || isProfileOrAvatarUrl(url)) return false;
+    if (/^data:image\/svg\+xml/i.test(url) || /^blob:/i.test(url) || /(?:\.mp4|\.webm|\.mov|\/o1\/v\/|\/v\/t(?:50|66)\.)/i.test(url)) return false;
+    if (/instagram\.com\/(?:p|reel|reels)\//i.test(url)) return false;
+    return /^data:image\/(?:jpeg|jpg|webp|avif|gif)/i.test(url) || /^https?:\/\//i.test(url);
+  };
+
   const readInstagramMedia = (container) => {
     if (!container) return [];
-    if (igVariantCache.has(container)) return igVariantCache.get(container);
 
     const seen = new WeakSet();
     let checked = 0;
@@ -424,20 +431,20 @@ export function scanLiveNowInTab() {
     const parseMediaObj = (obj, meta = {}) => {
       if (!obj || typeof obj !== 'object') return null;
 
-      const code = obj.code || obj.shortcode || meta.postId || '';
+      const code = obj.code || obj.shortcode || meta.postId || getInstagramShortcode(container?.querySelector?.('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]')?.href || '');
       const user = obj.user || obj.owner || {};
       const username = typeof user.username === 'string' ? user.username : (meta.author || getInstagramProfileFromPath() || '');
       const caption = typeof obj.caption === 'string'
         ? obj.caption
-        : (obj.caption?.text || obj.edge_media_to_caption?.edges?.[0]?.node?.text || meta.caption || '');
+        : (obj.caption?.text || obj.edge_media_to_caption?.edges?.[0]?.node?.text || obj.caption_text || obj.accessibility_caption || obj.accessibilityCaption || meta.caption || '');
       const rawLikes = obj.like_count != null ? obj.like_count : (obj.edge_liked_by?.count != null ? obj.edge_liked_by.count : (obj.edge_media_preview_like?.count != null ? obj.edge_media_preview_like.count : meta.likes));
       const likes = (rawLikes != null && Number(rawLikes) > 0) ? Number(rawLikes) : (meta.likes || undefined);
       const rawComments = obj.comment_count != null ? obj.comment_count : (obj.edge_media_to_comment?.count != null ? obj.edge_media_to_comment.count : meta.commentCount);
       const comments = (rawComments != null && Number(rawComments) > 0) ? Number(rawComments) : (meta.commentCount || undefined);
-      const postUrl = code ? `https://www.instagram.com/p/${code}/` : (meta.postUrl || '');
+      const postUrl = code ? `https://www.instagram.com/${/\/reels?\//i.test(meta.postUrl || container?.querySelector?.('a[href*="/reel/"], a[href*="/reels/"]')?.href || location.pathname) ? 'reel' : 'p'}/${code}/` : (meta.postUrl || '');
       const tagFromPath = getInstagramTagFromPath();
       const hashtags = extractHashtags(caption);
-      if (tagFromPath && !hashtags.includes(tagFromPath)) hashtags.push(tagFromPath);
+      if (tagFromPath && !hashtags.some(tag => tag.toLowerCase() === tagFromPath.toLowerCase())) hashtags.push(tagFromPath.toLowerCase());
       const mentions = extractMentions(caption);
 
       const carousel = obj.carousel_media || obj.edge_sidecar_to_children?.edges?.map(e => e.node) || [];
@@ -504,7 +511,9 @@ export function scanLiveNowInTab() {
         if (!poster && typeof obj.display_url === 'string') poster = obj.display_url;
         if (!poster && typeof obj.display_src === 'string') poster = obj.display_src;
         if (!poster && typeof obj.thumbnail_src === 'string') poster = obj.thumbnail_src;
-        if (!poster && container) poster = extractInstagramPoster(container);
+        // Fiber data may describe one carousel slide while `container` is the
+        // whole post. Never borrow a poster from that broader container: it
+        // can belong to a different slide or the profile UI.
 
         if (bestVid || poster) {
           return {
@@ -512,7 +521,7 @@ export function scanLiveNowInTab() {
             url: bestVid || poster,
             source: bestVid || poster,
             poster,
-            previewUrl: poster || bestVid,
+            previewUrl: poster,
             fallbackUrls: fallbacks,
             width: vW || (obj.dimensions?.width) || 0,
             height: vH || (obj.dimensions?.height) || 0,
@@ -610,7 +619,7 @@ export function scanLiveNowInTab() {
       }
     };
 
-    const nodes = [container, ...(container?.querySelectorAll?.('video, img, article, a[href*="/p/"], a[href*="/reel/"]') || [])];
+    const nodes = [container, ...(container?.querySelectorAll?.('video, img, article, a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]') || [])];
     for (const node of nodes) {
       if (found.length >= 25) break;
       for (const key of Object.keys(node)) {
@@ -628,7 +637,6 @@ export function scanLiveNowInTab() {
       }
     }
 
-    igVariantCache.set(container, found);
     return found;
   };
 
@@ -1109,16 +1117,19 @@ export function scanLiveNowInTab() {
 
     const articles = [...document.querySelectorAll('article')];
     articles.forEach(article => {
-      const postLink = article.querySelector('a[href*="/p/"], a[href*="/reel/"]');
+      const postLink = article.querySelector('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]');
       const postHref = postLink?.href || '';
       const postId = getInstagramShortcode(postHref || location.href);
-      const postUrl = postId ? `https://www.instagram.com/p/${postId}/` : (postHref || location.href);
+      const postUrl = postId ? `https://www.instagram.com/${/\/reels?\//i.test(postHref || location.pathname) ? 'reel' : 'p'}/${postId}/` : (postHref || location.href);
 
-      const authorEl = article.querySelector('header a[role="link"], header a[href^="/"], a[href^="/"][tabindex="0"]');
-      const author = authorEl?.textContent?.trim() || authorEl?.getAttribute('href')?.replace(/^\/|\/$/g, '') || profileAuthor || '';
+      const authorEl = article.querySelector('header a[href^="/"], a[role="link"][href^="/"]');
+      const authorPath = authorEl?.getAttribute('href') || '';
+      const authorFromPath = authorPath.match(/^\/([^/?#]+)\/?$/)?.[1] || '';
+      const authorText = authorEl?.textContent?.trim() || '';
+      const author = /^[a-zA-Z0-9._]{1,30}$/.test(authorFromPath) ? authorFromPath : (/^[a-zA-Z0-9._]{1,30}$/.test(authorText) ? authorText : profileAuthor || '');
 
-      const captionEl = article.querySelector('h1, span[dir="auto"], [data-testid="post-comment-root"]');
-      const caption = captionEl?.textContent?.trim() || '';
+      const captionEl = article.querySelector('[data-testid="post-comment-root"]') || article.querySelector('h1') || article.querySelector('[data-testid*="caption" i]');
+      const caption = (captionEl?.innerText || captionEl?.textContent || '').replace(/\s*more\s*$/i, '').trim();
 
       // Parse DOM likes and comments
       let domLikes = undefined;
@@ -1134,10 +1145,14 @@ export function scanLiveNowInTab() {
 
       const fiberItems = readInstagramMedia(article);
       if (fiberItems && fiberItems.length > 0) {
+        const articlePoster = article.querySelector('video')?.poster || article.querySelector('video')?.getAttribute('poster') || article.querySelector('img')?.currentSrc || article.querySelector('img')?.src || '';
         article.querySelectorAll('img, video').forEach(el => processedIgMedia.add(el));
         fiberItems.forEach(item => {
+          const itemPoster = [item.poster, item.thumbnail, item.previewImage, item.previewUrl, item.galleryIndex == null ? articlePoster : ''].find(isInstagramPosterUrl) || '';
           instagramItems.push({
             ...item,
+            poster: itemPoster,
+            previewUrl: item.type === 'video' ? itemPoster : (item.previewUrl || item.url),
             postId: item.postId || postId,
             author: item.author || author,
             caption: item.caption || caption,
@@ -1153,22 +1168,15 @@ export function scanLiveNowInTab() {
 
       // DOM fallback for video
       const articleVids = [...article.querySelectorAll('video')];
-      const poster = extractInstagramPoster(article);
       articleVids.forEach(v => {
         processedIgMedia.add(v);
+        const adjacentImg = v.parentElement?.querySelector?.('img');
+        const poster = v.poster || v.getAttribute('poster') || adjacentImg?.currentSrc || adjacentImg?.src || '';
         let vidSrc = (v.currentSrc && !v.currentSrc.startsWith('blob:') ? v.currentSrc : '') || (v.src && !v.src.startsWith('blob:') ? v.src : '');
-        if (!vidSrc) {
-          try {
-            const perfMp4 = performance.getEntriesByType('resource')
-              .map(e => e.name)
-              .find(name => /(?:cdninstagram\.com|fbcdn\.net)\/.*\.mp4/i.test(name));
-            if (perfMp4) vidSrc = cleanInstagramVideoUrl(perfMp4);
-          } catch {}
-        }
         const dur = (typeof v.duration === 'number' && Number.isFinite(v.duration) && v.duration > 0) ? Math.round(v.duration) : 0;
-        const mainUrl = vidSrc || poster || postUrl;
+        const mainUrl = vidSrc || postUrl;
         const hashtags = extractHashtags(caption);
-        if (tagFromPath && !hashtags.includes(tagFromPath)) hashtags.push(tagFromPath);
+        if (tagFromPath && !hashtags.some(tag => tag.toLowerCase() === tagFromPath.toLowerCase())) hashtags.push(tagFromPath.toLowerCase());
         const mentions = extractMentions(caption);
         instagramItems.push({
           url: mainUrl,
@@ -1190,7 +1198,7 @@ export function scanLiveNowInTab() {
           width: v.videoWidth || 0,
           height: v.videoHeight || 0,
           alt: caption.slice(0, 120) || (author ? `Video by ${author}` : 'Instagram video'),
-          source: vidSrc || poster,
+          source: vidSrc,
           playbackPage: vidSrc ? '' : postUrl
         });
       });
@@ -1216,7 +1224,7 @@ export function scanLiveNowInTab() {
         const src = bestSrcset(img.getAttribute('srcset') || '') || img.currentSrc || img.src || '';
         if (!src || isDisallowedMediaUrl(src) || isProfileOrAvatarUrl(src)) return;
         const hashtags = extractHashtags(caption);
-        if (tagFromPath && !hashtags.includes(tagFromPath)) hashtags.push(tagFromPath);
+        if (tagFromPath && !hashtags.some(tag => tag.toLowerCase() === tagFromPath.toLowerCase())) hashtags.push(tagFromPath.toLowerCase());
         const mentions = extractMentions(caption);
 
         instagramItems.push({
@@ -1246,19 +1254,23 @@ export function scanLiveNowInTab() {
     });
 
     // Grid items (Profile, Explore, Reels)
-    const gridLinks = [...document.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]')];
+    const gridLinks = [...document.querySelectorAll('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]')];
     gridLinks.forEach(link => {
       const href = link.href || '';
       const postId = getInstagramShortcode(href);
       if (!postId) return;
-      const postUrl = `https://www.instagram.com/p/${postId}/`;
+      const postUrl = `https://www.instagram.com/${/\/reels?\//i.test(href) ? 'reel' : 'p'}/${postId}/`;
 
       const fiberItems = readInstagramMedia(link);
       if (fiberItems && fiberItems.length > 0) {
+        const domPoster = link.querySelector('img')?.currentSrc || link.querySelector('img')?.src || '';
         link.querySelectorAll('img, video').forEach(el => processedIgMedia.add(el));
         fiberItems.forEach(item => {
+          const itemPoster = [item.poster, item.thumbnail, item.previewImage, domPoster, item.previewUrl].find(isInstagramPosterUrl) || '';
           instagramItems.push({
             ...item,
+            poster: itemPoster,
+            previewUrl: item.type === 'video' ? itemPoster : (item.previewUrl || itemPoster),
             postId: item.postId || postId,
             author: item.author || profileAuthor,
             postUrl,
@@ -1270,7 +1282,7 @@ export function scanLiveNowInTab() {
       }
 
       const vid = link.querySelector('video');
-      const poster = extractInstagramPoster(link);
+      const poster = link.querySelector('img')?.currentSrc || link.querySelector('img')?.src || (vid?.poster || vid?.getAttribute('poster')) || '';
       const isReelOrVideoLink = /\/reel\//i.test(href) ||
         Boolean(link.querySelector('svg[aria-label="Reel"], svg[aria-label="Clip"], span[aria-label="Reel"], [aria-label*="reel" i], [aria-label*="clip" i], [aria-label*="video" i]'));
 
@@ -1282,7 +1294,7 @@ export function scanLiveNowInTab() {
         const dur = (vid && typeof vid.duration === 'number' && Number.isFinite(vid.duration) && vid.duration > 0) ? Math.round(vid.duration) : 0;
         const hashtags = tagFromPath ? [tagFromPath] : [];
         instagramItems.push({
-          url: vidSrc || poster || postUrl,
+          url: vidSrc || postUrl,
           type: 'video',
           site: 'instagram',
           postId,
@@ -1297,7 +1309,7 @@ export function scanLiveNowInTab() {
           width: vid?.videoWidth || 0,
           height: vid?.videoHeight || 0,
           alt: link.querySelector('img')?.alt || 'Instagram reel',
-          source: vidSrc || poster,
+          source: vidSrc,
           playbackPage: vidSrc ? '' : postUrl
         });
         return; // Skip image processing for this post
@@ -1362,10 +1374,11 @@ export function scanLiveNowInTab() {
     if (isReddit && redditPost && !poster) {
       poster = extractRedditThumbnail(redditPost);
     }
-    const postUrl = redditPost?.getAttribute('permalink')
-      ? new URL(redditPost.getAttribute('permalink'), location.href).href
+    const redditPermalink = redditPost?.getAttribute('permalink') || redditPost?.querySelector('a[href*="/comments/"]')?.getAttribute('href') || redditPost?.querySelector('a[slot="post-title"], a[slot="full-post-link"]')?.getAttribute('href') || '';
+    const postId = redditPost ? ((redditPost.id || redditPost.getAttribute('id') || '').replace(/^t3_/, '') || redditPermalink.match(/\/comments\/([a-z0-9]+)/i)?.[1] || location.pathname.match(/\/comments\/([a-z0-9]+)/i)?.[1] || '') : '';
+    const postUrl = isReddit && redditPost
+      ? (redditPermalink ? new URL(redditPermalink, location.href).href : postId ? `https://www.reddit.com/comments/${postId}/` : location.href)
       : (tweet?.querySelector('a[href*="/status/"]')?.href || tweet?.querySelector('time')?.closest('a')?.href || (isX && location.pathname.includes('/status/') ? location.href.split('?')[0] : ''));
-    const postId = redditPost ? (redditPost.id || redditPost.getAttribute('id') || '') : '';
     const thumb = img?.currentSrc || img?.src || '';
     const videoThumb = /ext_tw_video_thumb|tweet_video_thumb|amplify_video_thumb/i.test(thumb);
     const type = video || player || videoThumb || redditExt ? 'video' : 'image';
@@ -1381,7 +1394,9 @@ export function scanLiveNowInTab() {
     let author = '';
     let score = '';
     let commentCount = '';
+    let caption = '';
     let tweetText = '';
+    let hashtags = [];
     let authorName = '';
     let authorHandle = '';
 
@@ -1398,14 +1413,19 @@ export function scanLiveNowInTab() {
 
     if (isReddit && redditPost) {
       subreddit = redditPost.getAttribute('subreddit-prefixed-name') || redditPost.getAttribute('subreddit-name') || '';
-      author = redditPost.getAttribute('author') || '';
+      const authorPath = redditPost.querySelector('a[href*="/user/"], a[href*="/u/"], a[slot="author-name"]')?.getAttribute('href') || '';
+      const authorFromPath = authorPath.match(/\/(?:user|u)\/([^/?#]+)/i)?.[1] || '';
+      const authorAttr = redditPost.getAttribute('author') || '';
+      author = authorFromPath || (/^[a-zA-Z0-9_-]{2,24}$/.test(authorAttr) && !/^(?:deleted|automoderator)$/i.test(authorAttr) ? authorAttr : '');
       score = redditPost.getAttribute('score') || '';
       commentCount = redditPost.getAttribute('comment-count') || '';
+      caption = redditPost.getAttribute('post-title') || redditPost.querySelector('[slot="title"]')?.textContent?.trim() || redditPost.querySelector('h1, h2, h3')?.textContent?.trim() || '';
     }
 
     if (isX && tweet) {
       tweetText = tweet.querySelector('[data-testid="tweetText"]')?.innerText?.trim() ||
                   tweet.querySelector('[data-testid="tweetText"]')?.textContent?.trim() || '';
+      hashtags = extractHashtags(tweetText);
       authorName = tweet.querySelector('[data-testid="User-Name"] span')?.textContent?.trim() || '';
       const authorHandleMatch = tweet.querySelector('[data-testid="User-Name"]')?.textContent?.match(/@([a-zA-Z0-9_]+)/);
       authorHandle = authorHandleMatch ? authorHandleMatch[1] : '';
@@ -1475,7 +1495,9 @@ export function scanLiveNowInTab() {
       author,
       score,
       commentCount,
+      caption,
       tweetText,
+      hashtags,
       authorName,
       authorHandle,
       site: isReddit ? 'reddit' : isX ? 'x' : '',

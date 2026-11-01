@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   filename,
   formatSize,
@@ -42,6 +42,7 @@ export default function ViewerInfoBar({
   onNavigateGallery,
   onNavigateToInstagram
 }) {
+  const [postTextExpanded, setPostTextExpanded] = useState(false);
   const isVideo = item.type === 'video' || Boolean(currentVideoUrl);
   const isReddit = item.site === 'reddit';
   const isX = item.site === 'x';
@@ -49,22 +50,37 @@ export default function ViewerInfoBar({
   const isInstagram = item.site === 'instagram';
 
   const subreddit = item.subreddit || '';
-  const redditAuthor = item.author || '';
+  const redditAuthor = item.author || item.authorHandle || '';
+  const redditUsername = (() => {
+    const value = String(redditAuthor).trim();
+    const fromUrl = value.match(/reddit\.com\/(?:user|u)\/([^/?#]+)/i)?.[1];
+    const username = (fromUrl || value.replace(/^u\//i, '').replace(/^@/, '')).trim();
+    return /^[a-zA-Z0-9_-]{2,24}$/.test(username) && !/^(?:deleted|automoderator)$/i.test(username) ? username : '';
+  })();
   const redditScore = item.score || '';
 
   const authorHandle = item.authorHandle || '';
+  const cleanXHandle = authorHandle.replace(/^@/, '');
 
   const blogName = item.blogName || '';
   const rebloggedFrom = item.rebloggedFrom || '';
   const tags = Array.isArray(item.tags) ? item.tags : [];
 
   const altAuthor = item.alt ? ((item.alt.match(/(?:Photo|Video)\s+by\s+([^.]+?)\s+on/i)?.[1]) || (item.alt.match(/by\s+@?([a-zA-Z0-9_\.]+)/i)?.[1]) || '') : '';
-  const igAuthor = item.author || altAuthor;
+  const rawIgAuthor = item.author || altAuthor || '';
+  const igAuthor = rawIgAuthor.match(/instagram\.com\/([^/?#]+)/i)?.[1] || rawIgAuthor.replace(/^@/, '');
   const igLikes = item.likes != null ? item.likes : (item.likeCount != null ? item.likeCount : '');
   const hasIgLikes = (typeof igLikes === 'number' && igLikes > 0) || (typeof igLikes === 'string' && igLikes && !/^(?:0|0\s*likes?)$/i.test(igLikes.trim()));
   const igComments = item.commentCount != null ? item.commentCount : (item.comments != null ? item.comments : '');
   const hasIgComments = (typeof igComments === 'number' && igComments > 0) || (typeof igComments === 'string' && igComments && !/^(?:0|0\s*comments?)$/i.test(igComments.trim()));
-  const igHashtags = Array.isArray(item.hashtags) && item.hashtags.length ? item.hashtags : extractHashtags(item.caption || item.alt || '');
+  const postText = item.tweetText || (isReddit ? item.caption || item.alt || item.pageTitle || '' : item.caption || '');
+  const normalizedHashtags = [...new Set([
+    ...(Array.isArray(item.hashtags) ? item.hashtags : []),
+    ...(Array.isArray(item.tags) ? item.tags : []),
+    ...extractHashtags(postText)
+  ].map(tag => String(tag).trim().replace(/^#+/, '')).filter(Boolean))];
+  const postHashtags = normalizedHashtags;
+  const igHashtags = isInstagram ? postHashtags : [];
 
   // Get active variant label if available
   const activeVariant = videoVariants.find(v => v.url === currentVideoUrl) || videoVariants[0];
@@ -79,8 +95,8 @@ export default function ViewerInfoBar({
             {subreddit && (
               <button
                 className="viewer-badge-pill subreddit-pill"
-                onClick={() => window.open(`https://reddit.com/${subreddit.replace(/^\/?/, '')}`, '_blank', 'noopener')}
-                title="Open Subreddit in new tab"
+                onClick={() => onNavigateToInstagram ? onNavigateToInstagram(`https://www.reddit.com/${subreddit.replace(/^\/?/, '')}`) : window.open(`https://www.reddit.com/${subreddit.replace(/^\/?/, '')}`, '_blank', 'noopener')}
+                title="Open Subreddit in Mosaic"
               >
                 {subreddit.startsWith('r/') ? subreddit : `r/${subreddit}`} ↗
               </button>
@@ -90,19 +106,22 @@ export default function ViewerInfoBar({
                 {item.provider.toUpperCase()}
               </span>
             )}
-            {redditAuthor && (
-              <button
-                className="viewer-badge-pill author-pill"
-                onClick={() => window.open(`https://reddit.com/user/${redditAuthor.replace(/^u\//, '')}`, '_blank', 'noopener')}
-                title="Open Author Profile in new tab"
-              >
-                u/{redditAuthor.replace(/^u\//, '')}
-              </button>
-            )}
             {redditScore && (
               <span className="viewer-badge-pill score-pill" title="Upvotes">
                 ▲ {redditScore}
               </span>
+            )}
+            {redditUsername && (
+              <button
+                className="viewer-badge-pill author-pill"
+                onClick={() => {
+                  const url = `https://www.reddit.com/user/${encodeURIComponent(redditUsername)}/`;
+                  onNavigateToInstagram ? onNavigateToInstagram(url) : window.open(url, '_blank', 'noopener');
+                }}
+                title="Open Reddit profile in Mosaic"
+              >
+                u/{redditUsername} ↗
+              </button>
             )}
           </div>
         )}
@@ -112,12 +131,31 @@ export default function ViewerInfoBar({
           <div className="viewer-platform-pill-group">
             <button
               className="viewer-badge-pill x-pill"
-              onClick={() => window.open(`https://x.com/${authorHandle}`, '_blank', 'noopener')}
-              title={`Open @${authorHandle} on X`}
+              onClick={() => onNavigateToInstagram ? onNavigateToInstagram(`https://x.com/${encodeURIComponent(cleanXHandle)}`) : window.open(`https://x.com/${encodeURIComponent(cleanXHandle)}`, '_blank', 'noopener')}
+              title={`Open @${cleanXHandle} on X in Mosaic`}
             >
               <span className="x-glyph">𝕏</span>
-              <span>@{authorHandle} ↗</span>
+              <span>@{cleanXHandle} ↗</span>
             </button>
+          </div>
+        )}
+
+        {isX && Array.isArray(item.hashtags) && item.hashtags.length > 0 && !postText && (
+          <div className="viewer-platform-pill-group">
+            {item.hashtags.slice(0, 3).map(tag => {
+              const cleanTag = String(tag).replace(/^#/, '');
+              const url = `https://x.com/hashtag/${encodeURIComponent(cleanTag)}`;
+              return (
+                <button
+                  key={`x-${cleanTag}`}
+                  className="viewer-badge-pill x-pill"
+                  onClick={() => onNavigateToInstagram ? onNavigateToInstagram(url) : window.open(url, '_blank', 'noopener')}
+                  title={`Explore #${cleanTag} on X in Mosaic`}
+                >
+                  #{cleanTag} ↗
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -179,7 +217,7 @@ export default function ViewerInfoBar({
                 💬 {typeof igComments === 'number' ? Number(igComments).toLocaleString() : igComments}
               </span>
             )}
-            {igHashtags.slice(0, 3).map(tag => (
+            {igHashtags.map(tag => (
               <button
                 key={tag}
                 className="viewer-badge-pill instagram-tag-pill"
@@ -218,13 +256,58 @@ export default function ViewerInfoBar({
         )}
 
         {/* Title & Dimension */}
-        <span className="viewer-title-text" title={item.alt || filename(item.url)}>
-          {item.alt || filename(item.url)}
-        </span>
+        {!(isVideo && (!item.alt || item.alt === filename(item.url))) && (
+          <span className="viewer-title-text" title={item.alt || filename(item.url)}>
+            {item.alt || filename(item.url)}
+          </span>
+        )}
         <small className="viewer-dim-text">
           {item.width || '—'} × {item.height || '—'}
           {item.size ? ` · ${formatSize(item.size)}` : ''}
         </small>
+        {isX && (postText || postHashtags.length > 0) ? (
+          <div className="viewer-x-post-meta">
+            {postText && (
+              <button
+                type="button"
+                className={`viewer-post-text ${postTextExpanded ? 'expanded' : ''}`}
+                aria-expanded={postTextExpanded}
+                title={postTextExpanded ? 'Click to collapse post text' : 'Click to expand post text'}
+                onClick={() => setPostTextExpanded(value => !value)}
+              >
+                {postText}
+              </button>
+            )}
+            {postHashtags.length > 0 && <div className="viewer-platform-pill-group viewer-post-hashtags">{postHashtags.slice(0, 5).map(tag => {
+              const cleanTag = String(tag).replace(/^#/, '');
+              const url = `https://x.com/hashtag/${encodeURIComponent(cleanTag)}`;
+              return <button key={cleanTag} type="button" className="viewer-badge-pill x-pill" title={`Explore #${cleanTag} on X in Mosaic`} onClick={() => onNavigateToInstagram ? onNavigateToInstagram(url) : window.open(url, '_blank', 'noopener')}>#{cleanTag} ↗</button>;
+            })}</div>}
+          </div>
+        ) : (postText || (isInstagram && postHashtags.length > 0)) ? (
+          <div className="viewer-instagram-post-meta">
+            {postText && <button
+              type="button"
+              className={`viewer-post-text ${postTextExpanded ? 'expanded' : ''}`}
+              aria-expanded={postTextExpanded}
+              title={postTextExpanded ? 'Click to collapse post text' : 'Click to expand post text'}
+              onClick={() => setPostTextExpanded(value => !value)}
+            >
+              {postText}
+            </button>}
+            {isInstagram && postHashtags.length > 0 && <div className="viewer-post-hashtags">
+              {postHashtags.map(tag => (
+                <button
+                  key={`ig-caption-${tag}`}
+                  type="button"
+                  className="viewer-badge-pill instagram-tag-pill"
+                  onClick={() => onNavigateToInstagram ? onNavigateToInstagram(getInstagramHashtagUrl(tag)) : window.open(getInstagramHashtagUrl(tag), '_blank', 'noopener')}
+                  title={`Explore #${tag} on Instagram in extension view`}
+                >#{tag} ↗</button>
+              ))}
+            </div>}
+          </div>
+        ) : null}
       </div>
 
       {/* Right side: Direct visible action buttons */}
@@ -238,10 +321,10 @@ export default function ViewerInfoBar({
           >
             Watch on YouTube ↗
           </button>
-        ) : isPostDifferent ? (
+        ) : isPostDifferent && !(isReddit && !directUrl) ? (
           <button
             className="viewer-ctrl-btn viewer-ctrl-pill primary-site-btn"
-            onClick={() => isInstagram && onNavigateToInstagram ? onNavigateToInstagram(postOrPage) : window.open(postOrPage, '_blank', 'noopener')}
+            onClick={() => (isInstagram || isReddit) && onNavigateToInstagram ? onNavigateToInstagram(postOrPage) : window.open(postOrPage, '_blank', 'noopener')}
             title={isReddit ? 'Open Reddit thread' : isX ? 'Open X post' : isTumblr ? 'Open Tumblr post' : isInstagram ? 'Open Instagram post in extension view' : 'Open source page'}
           >
             <ExternalLinkIcon size={13} />
@@ -250,7 +333,7 @@ export default function ViewerInfoBar({
         ) : null}
 
         {/* 2. Direct Media URL */}
-        {isDirectValid && (
+        {isDirectValid && !(isReddit && /reddit\.com\/(?:comments|user|r)\//i.test(directUrl)) && (
           <button
             className="viewer-ctrl-btn viewer-ctrl-pill"
             onClick={() => window.open(directUrl, '_blank', 'noopener')}

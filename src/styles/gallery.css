@@ -718,7 +718,7 @@ html[data-theme=amoled] .clear-filters-btn.has-active:hover {
   overflow: hidden;
   border-radius: 5px;
   background: #e7e8df;
-  cursor: zoom-in;
+  cursor: pointer;
 }
 
 .media-thumb.landscape { aspect-ratio: 1.48; }

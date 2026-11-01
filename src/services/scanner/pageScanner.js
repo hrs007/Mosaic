@@ -64,7 +64,7 @@ export function scanPageInTab(includeBackgrounds) {
 
   const extractHashtags = (text) => {
     if (!text || typeof text !== 'string') return [];
-    const matches = text.match(/#([a-zA-Z0-9_\u0080-\uffff]+)/g);
+    const matches = text.match(/#([\p{L}\p{N}_\u200c\u200d]+)/gu);
     if (!matches) return [];
     return [...new Set(matches.map(m => m.slice(1).toLowerCase()))];
   };
@@ -88,6 +88,13 @@ export function scanPageInTab(includeBackgrounds) {
     }
   };
 
+  const isInstagramPosterUrl = (url) => {
+    if (!url || typeof url !== 'string' || isDisallowedMediaUrl(url) || isProfileOrAvatarUrl(url)) return false;
+    if (/^data:image\/svg\+xml/i.test(url) || /^blob:/i.test(url) || /(?:\.mp4|\.webm|\.mov|\/o1\/v\/|\/v\/t(?:50|66)\.)/i.test(url)) return false;
+    if (/instagram\.com\/(?:p|reel|reels)\//i.test(url)) return false;
+    return /^data:image\/(?:jpeg|jpg|png|webp|avif|gif)/i.test(url) || /^https?:\/\//i.test(url);
+  };
+
   const getInstagramProfileFromPath = (pathname = '') => {
     try {
       const path = (pathname || location.pathname || '').replace(/^\/+|\/+$/g, '');
@@ -105,7 +112,9 @@ export function scanPageInTab(includeBackgrounds) {
     try {
       const path = pathname || location.pathname || '';
       const m = path.match(/\/explore\/tags\/([^\/?#]+)/i) || path.match(/\/tags\/([^\/?#]+)/i);
-      return m ? decodeURIComponent(m[1]) : '';
+      if (m) return decodeURIComponent(m[1]);
+      const query = new URLSearchParams(location.search || '').get('q') || '';
+      return query.startsWith('#') ? query.slice(1) : '';
     } catch {}
     return '';
   };
@@ -144,10 +153,10 @@ export function scanPageInTab(includeBackgrounds) {
     if (!container) return '';
     let root = container;
     if (root.matches?.('video')) {
-      root = root.closest('a[href*="/p/"], a[href*="/reel/"], article, div[role="dialog"]') || root.parentElement?.parentElement || root.parentElement || root;
+      root = root.closest('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"], article, div[role="dialog"]') || root.parentElement?.parentElement || root.parentElement || root;
     }
     if (!root.querySelector?.('img, picture source, canvas, [style*="background-image"], [style*="background:"]')) {
-      const up = root.closest?.('a[href*="/p/"], a[href*="/reel/"], article, div[role="dialog"]');
+      const up = root.closest?.('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"], article, div[role="dialog"]');
       if (up) root = up;
     }
 
@@ -245,10 +254,8 @@ export function scanPageInTab(includeBackgrounds) {
     return '';
   };
 
-  const igVariantCache = new WeakMap();
   const readInstagramMedia = (container) => {
     if (!container) return [];
-    if (igVariantCache.has(container)) return igVariantCache.get(container);
 
     const seen = new WeakSet();
     let checked = 0;
@@ -260,17 +267,17 @@ export function scanPageInTab(includeBackgrounds) {
       const code = obj.code || obj.shortcode || meta.postId || '';
       const user = obj.user || obj.owner || {};
       const username = typeof user.username === 'string' ? user.username : (meta.author || getInstagramProfileFromPath() || '');
-      const caption = typeof obj.caption === 'string'
-        ? obj.caption
-        : (obj.caption?.text || obj.edge_media_to_caption?.edges?.[0]?.node?.text || meta.caption || '');
+        const caption = typeof obj.caption === 'string'
+          ? obj.caption
+          : (obj.caption?.text || obj.edge_media_to_caption?.edges?.[0]?.node?.text || obj.caption_text || obj.accessibility_caption || obj.accessibilityCaption || meta.caption || '');
       const rawLikes = obj.like_count != null ? obj.like_count : (obj.edge_liked_by?.count != null ? obj.edge_liked_by.count : (obj.edge_media_preview_like?.count != null ? obj.edge_media_preview_like.count : meta.likes));
       const likes = (rawLikes != null && Number(rawLikes) > 0) ? Number(rawLikes) : (meta.likes || undefined);
       const rawComments = obj.comment_count != null ? obj.comment_count : (obj.edge_media_to_comment?.count != null ? obj.edge_media_to_comment.count : meta.commentCount);
       const comments = (rawComments != null && Number(rawComments) > 0) ? Number(rawComments) : (meta.commentCount || undefined);
-      const postUrl = code ? `https://www.instagram.com/p/${code}/` : (meta.postUrl || '');
+      const postUrl = code ? `https://www.instagram.com/${/\/reels?\//i.test(meta.postUrl || location.pathname) ? 'reel' : 'p'}/${code}/` : (meta.postUrl || '');
       const tagFromPath = getInstagramTagFromPath();
       const hashtags = extractHashtags(caption);
-      if (tagFromPath && !hashtags.includes(tagFromPath)) hashtags.push(tagFromPath);
+      if (tagFromPath && !hashtags.some(tag => tag.toLowerCase() === tagFromPath.toLowerCase())) hashtags.push(tagFromPath.toLowerCase());
       const mentions = extractMentions(caption);
 
       // Check carousel_media
@@ -339,7 +346,9 @@ export function scanPageInTab(includeBackgrounds) {
         if (!poster && typeof obj.display_url === 'string') poster = obj.display_url;
         if (!poster && typeof obj.display_src === 'string') poster = obj.display_src;
         if (!poster && typeof obj.thumbnail_src === 'string') poster = obj.thumbnail_src;
-        if (!poster && container) poster = extractInstagramPoster(container);
+        // Fiber data may describe one carousel slide while `container` is the
+        // whole post. Never borrow a poster from that broader container: it
+        // can belong to a different slide or the profile UI.
 
         if (bestVid || poster) {
           return {
@@ -347,7 +356,7 @@ export function scanPageInTab(includeBackgrounds) {
             url: bestVid || poster,
             source: bestVid || poster,
             poster,
-            previewUrl: poster || bestVid,
+            previewUrl: poster,
             fallbackUrls: fallbacks,
             width: vW || (obj.dimensions?.width) || 0,
             height: vH || (obj.dimensions?.height) || 0,
@@ -442,7 +451,7 @@ export function scanPageInTab(includeBackgrounds) {
       }
     };
 
-    const nodes = [container, ...(container?.querySelectorAll?.('video, img, article, a[href*="/p/"], a[href*="/reel/"]') || [])];
+    const nodes = [container, ...(container?.querySelectorAll?.('video, img, article, a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]') || [])];
     for (const node of nodes) {
       if (found.length >= 25) break;
       for (const key of Object.keys(node)) {
@@ -460,7 +469,6 @@ export function scanPageInTab(includeBackgrounds) {
       }
     }
 
-    igVariantCache.set(container, found);
     return found;
   };
 
@@ -767,7 +775,7 @@ export function scanPageInTab(includeBackgrounds) {
     try {
       const absolute = new URL(url, location.href).href;
       if (!/^https?:|^blob:|^data:image\/(?!svg)/i.test(absolute) || isDisallowedMediaUrl(absolute) || isProfileOrAvatarUrl(absolute)) return;
-      const postUrl = meta.postUrl || (site.key === 'instagram' ? (node?.closest?.('article')?.querySelector?.('a[href*="/p/"], a[href*="/reel/"]')?.href || node?.closest?.('a[href*="/p/"], a[href*="/reel/"]')?.href || '') : (node?.closest?.('article,[data-testid="tweet"]')?.querySelector?.('a[href*="/status/"]')?.href || ''));
+      const postUrl = meta.postUrl || (site.key === 'instagram' ? (node?.closest?.('article')?.querySelector?.('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]')?.href || node?.closest?.('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]')?.href || '') : (node?.closest?.('article,[data-testid="tweet"]')?.querySelector?.('a[href*="/status/"]')?.href || ''));
       const directXVideo = site.key === 'x' && type === 'video' && new URL(absolute).hostname === 'video.twimg.com' && /\.mp4(?:[?#]|$)/i.test(absolute);
       const isIgBlob = site.key === 'instagram' && type === 'video' && /^blob:/i.test(absolute);
       const pagePlayback = type === 'video' && ((site.key === 'x' && !directXVideo) || (site.key !== 'instagram' && /^blob:/i.test(absolute)) || /\.m3u8(?:[?#]|$)|\.mpd(?:[?#]|$)/i.test(absolute) || /application\/(?:x-mpegurl|vnd\.apple\.mpegurl|dash\+xml)/i.test(node?.type || ''));
@@ -854,6 +862,19 @@ export function scanPageInTab(includeBackgrounds) {
       if (!old) {
         found.set(key, item);
       } else {
+        if (site.key === 'instagram') {
+          if ((!old.caption || item.caption?.length > old.caption.length) && item.caption) old.caption = item.caption;
+          if ((!old.author || old.author === '[deleted]') && item.author) old.author = item.author;
+          if ((!old.postUrl || /instagram\.com\/(?:explore|[^/]+)\/?(?:[?#]|$)/i.test(old.postUrl)) && item.postUrl) old.postUrl = item.postUrl;
+          if (!old.poster && item.poster) old.poster = item.poster;
+          if (!old.previewUrl && item.previewUrl) old.previewUrl = item.previewUrl;
+          old.hashtags = [...new Set([...(old.hashtags || []), ...(item.hashtags || [])])];
+          old.mentions = [...new Set([...(old.mentions || []), ...(item.mentions || [])])];
+          old.tags = [...new Set([...(old.tags || []), ...(item.tags || [])])];
+          old.likes = old.likes || item.likes;
+          old.commentCount = old.commentCount || item.commentCount;
+          old.galleryTotal = Math.max(old.galleryTotal || 0, item.galleryTotal || 0) || null;
+        }
         if (item.width * item.height > old.width * old.height) {
           old.width = item.width;
           old.height = item.height;
@@ -896,8 +917,8 @@ export function scanPageInTab(includeBackgrounds) {
     uniquePosts.forEach(post => {
       const permalink = post.getAttribute?.('permalink') ||
                         post.querySelector?.('a[href*="/comments/"]')?.getAttribute('href') ||
-                        post.querySelector?.('a[slot="full-post-link"]')?.getAttribute('href') || '';
-      const pageUrl = permalink ? new URL(permalink, location.href).href : location.href;
+                        post.querySelector?.('a[slot="full-post-link"]')?.getAttribute('href') ||
+                        post.querySelector?.('a[slot="post-title"], a[slot="full-post-link"]')?.getAttribute('href') || '';
       const title = post.getAttribute?.('post-title') ||
                     post.querySelector?.('[slot="title"]')?.textContent?.trim() ||
                     post.querySelector?.('h1, h2, h3, a[slot="full-post-link"]')?.textContent?.trim() ||
@@ -906,10 +927,14 @@ export function scanPageInTab(includeBackgrounds) {
       const content = post.getAttribute?.('content-href') ||
                       post.querySelector?.('a[slot="content"], a[slot="thumbnail"]')?.getAttribute('href') || '';
       const domain = post.getAttribute?.('domain') || '';
-      const postId = post.id || post.getAttribute?.('id') || getRedditPostId(pageUrl);
+      const postId = (post.id || post.getAttribute?.('id') || '').replace(/^t3_/, '') || getRedditPostId(permalink) || getRedditPostId(location.href);
+      const pageUrl = permalink ? new URL(permalink, location.href).href : postId ? `https://www.reddit.com/comments/${postId}/` : location.href;
 
       const subreddit = post.getAttribute?.('subreddit-prefixed-name') || post.getAttribute?.('subreddit-name') || '';
-      const author = post.getAttribute?.('author') || '';
+      const authorPath = post.querySelector?.('a[href*="/user/"], a[href*="/u/"], a[slot="author-name"]')?.getAttribute('href') || '';
+      const authorFromPath = authorPath.match(/\/(?:user|u)\/([^/?#]+)/i)?.[1] || '';
+      const authorAttr = post.getAttribute?.('author') || '';
+      const author = authorFromPath || (/^[a-zA-Z0-9_-]{2,24}$/.test(authorAttr) && !/^(?:deleted|automoderator)$/i.test(authorAttr) ? authorAttr : '');
       const score = post.getAttribute?.('score') || '';
       const commentCount = post.getAttribute?.('comment-count') || '';
 
@@ -920,6 +945,7 @@ export function scanPageInTab(includeBackgrounds) {
         const mainUrl = ext.directUrl || ext.fallbackUrls[0] || ext.embedUrl || poster || pageUrl;
         add(mainUrl, 'video', post, poster, {
           postId,
+          caption: title,
           alt: title,
           pageUrl,
           pageTitle: title,
@@ -975,6 +1001,7 @@ export function scanPageInTab(includeBackgrounds) {
         const isGif = player?.hasAttribute('gif') || postType === 'gif' || (content && content.includes('.gif'));
         add(videoUrl || poster || pageUrl, 'video', player || post, poster, {
           postId,
+          caption: title,
           alt: title,
           pageUrl,
           pageTitle: title,
@@ -1007,6 +1034,7 @@ export function scanPageInTab(includeBackgrounds) {
           const isMp4 = /[?&]format=mp4/i.test(src) || /\.mp4(?:[?#]|$)/i.test(src);
           add(src, isMp4 ? 'video' : 'image', img, '', {
             postId,
+            caption: title,
             postType: 'gallery',
             isGallery: true,
             galleryIndex: idx,
@@ -1034,6 +1062,7 @@ export function scanPageInTab(includeBackgrounds) {
         if (isDirectImg || isContentGif) {
           add(content, 'image', post, '', {
             postId,
+            caption: title,
             alt: title,
             pageUrl,
             pageTitle: title,
@@ -1056,6 +1085,7 @@ export function scanPageInTab(includeBackgrounds) {
         const isMp4 = /[?&]format=mp4/i.test(thumb) || /\.mp4(?:[?#]|$)/i.test(thumb);
         add(thumb, isMp4 ? 'video' : 'image', post, '', {
           postId,
+          caption: title,
           alt: title,
           pageUrl,
           pageTitle: title,
@@ -1081,6 +1111,7 @@ export function scanPageInTab(includeBackgrounds) {
         const isMp4 = /[?&]format=mp4/i.test(src) || /\.mp4(?:[?#]|$)/i.test(src);
         add(src, isMp4 ? 'video' : 'image', img, '', {
           postId,
+          caption: title,
           alt: img.alt || title,
           pageUrl,
           pageTitle: title,
@@ -1367,16 +1398,19 @@ export function scanPageInTab(includeBackgrounds) {
     // 1. Process feed posts and modals (<article>)
     const articles = [...document.querySelectorAll('article')];
     articles.forEach(article => {
-      const postLink = article.querySelector('a[href*="/p/"], a[href*="/reel/"]');
+      const postLink = article.querySelector('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]');
       const postHref = postLink?.href || '';
       const postId = getInstagramShortcode(postHref || location.href);
-      const postUrl = postId ? `https://www.instagram.com/p/${postId}/` : (postHref || location.href);
+      const postUrl = postId ? `https://www.instagram.com/${/\/reels?\//i.test(postHref || location.pathname) ? 'reel' : 'p'}/${postId}/` : (postHref || location.href);
 
-      const authorEl = article.querySelector('header a[role="link"], header a[href^="/"], a[href^="/"][tabindex="0"]');
-      const author = authorEl?.textContent?.trim() || authorEl?.getAttribute('href')?.replace(/^\/|\/$/g, '') || profileAuthor || '';
+      const authorEl = article.querySelector('header a[href^="/"], a[role="link"][href^="/"]');
+      const authorPath = authorEl?.getAttribute('href') || '';
+      const authorFromPath = authorPath.match(/^\/([^/?#]+)\/?$/)?.[1] || '';
+      const authorText = authorEl?.textContent?.trim() || '';
+      const author = /^[a-zA-Z0-9._]{1,30}$/.test(authorFromPath) ? authorFromPath : (/^[a-zA-Z0-9._]{1,30}$/.test(authorText) ? authorText : profileAuthor || '');
 
-      const captionEl = article.querySelector('h1, span[dir="auto"], [data-testid="post-comment-root"]');
-      const caption = captionEl?.textContent?.trim() || '';
+      const captionEl = article.querySelector('[data-testid="post-comment-root"]') || article.querySelector('h1') || article.querySelector('[data-testid*="caption" i]');
+      const caption = (captionEl?.innerText || captionEl?.textContent || '').replace(/\s*more\s*$/i, '').trim();
 
       // Parse DOM likes and comments
       let domLikes = undefined;
@@ -1393,10 +1427,14 @@ export function scanPageInTab(includeBackgrounds) {
       // Try React Fiber inspection first for original full-res candidates, carousels, and direct MP4s
       const fiberItems = readInstagramMedia(article);
       if (fiberItems && fiberItems.length > 0) {
+        const articlePoster = article.querySelector('video')?.poster || article.querySelector('video')?.getAttribute('poster') || article.querySelector('img')?.currentSrc || article.querySelector('img')?.src || '';
         article.querySelectorAll('img, video').forEach(el => processedIgMedia.add(el));
         fiberItems.forEach(item => {
-          add(item.url, item.type, null, item.poster || '', {
+          const itemPoster = [item.poster, item.thumbnail, item.previewImage, item.previewUrl, item.galleryIndex == null ? articlePoster : ''].find(isInstagramPosterUrl) || '';
+          add(item.url, item.type, null, itemPoster, {
             ...item,
+            poster: itemPoster,
+            previewUrl: item.type === 'video' ? itemPoster : (item.previewUrl || item.url),
             postId: item.postId || postId,
             author: item.author || author,
             caption: item.caption || caption,
@@ -1412,22 +1450,15 @@ export function scanPageInTab(includeBackgrounds) {
 
       // Fallback: DOM parsing
       const articleVids = [...article.querySelectorAll('video')];
-      const poster = extractInstagramPoster(article);
       articleVids.forEach(v => {
         processedIgMedia.add(v);
+        const adjacentImg = v.parentElement?.querySelector?.('img');
+        const poster = v.poster || v.getAttribute('poster') || adjacentImg?.currentSrc || adjacentImg?.src || '';
         let vidSrc = (v.currentSrc && !v.currentSrc.startsWith('blob:') ? v.currentSrc : '') || (v.src && !v.src.startsWith('blob:') ? v.src : '');
-        if (!vidSrc) {
-          try {
-            const perfMp4 = performance.getEntriesByType('resource')
-              .map(e => e.name)
-              .find(name => /(?:cdninstagram\.com|fbcdn\.net)\/.*\.mp4/i.test(name));
-            if (perfMp4) vidSrc = cleanInstagramVideoUrl(perfMp4);
-          } catch {}
-        }
         const dur = (typeof v.duration === 'number' && Number.isFinite(v.duration) && v.duration > 0) ? Math.round(v.duration) : 0;
-        const mainUrl = vidSrc || poster || postUrl;
+        const mainUrl = vidSrc || postUrl;
         const hashtags = extractHashtags(caption);
-        if (tagFromPath && !hashtags.includes(tagFromPath)) hashtags.push(tagFromPath);
+        if (tagFromPath && !hashtags.some(tag => tag.toLowerCase() === tagFromPath.toLowerCase())) hashtags.push(tagFromPath.toLowerCase());
         const mentions = extractMentions(caption);
         add(mainUrl, 'video', v, poster, {
           site: 'instagram',
@@ -1443,7 +1474,7 @@ export function scanPageInTab(includeBackgrounds) {
           pageUrl: postUrl,
           duration: dur,
           alt: caption.slice(0, 120) || (author ? `Video by ${author}` : 'Instagram video'),
-          source: vidSrc || poster,
+          source: vidSrc,
           playbackPage: vidSrc ? '' : postUrl
         });
       });
@@ -1463,13 +1494,14 @@ export function scanPageInTab(includeBackgrounds) {
         return true;
       });
 
-      const totalSlides = validImgs.length;
-      validImgs.forEach((img, idx) => {
+      const carouselControls = article.querySelector('[aria-label*="Next" i], [aria-label*="Previous" i], [aria-label*="slide" i]');
+      const postImages = carouselControls ? validImgs.slice(0, 1) : validImgs;
+      postImages.forEach((img, idx) => {
         processedIgMedia.add(img);
         const src = bestSrcset(img.getAttribute('srcset') || '') || img.currentSrc || img.src || '';
         if (!src || isDisallowedMediaUrl(src) || isProfileOrAvatarUrl(src)) return;
         const hashtags = extractHashtags(caption);
-        if (tagFromPath && !hashtags.includes(tagFromPath)) hashtags.push(tagFromPath);
+        if (tagFromPath && !hashtags.some(tag => tag.toLowerCase() === tagFromPath.toLowerCase())) hashtags.push(tagFromPath.toLowerCase());
         const mentions = extractMentions(caption);
 
         add(src, 'image', img, '', {
@@ -1484,9 +1516,9 @@ export function scanPageInTab(includeBackgrounds) {
           commentCount: domComments,
           postUrl,
           pageUrl: postUrl,
-          galleryIndex: totalSlides > 1 ? idx : null,
-          galleryTotal: totalSlides > 1 ? totalSlides : null,
-          isGallery: totalSlides > 1,
+          galleryIndex: postImages.length > 1 ? idx : null,
+          galleryTotal: postImages.length > 1 ? postImages.length : null,
+          isGallery: postImages.length > 1,
           alt: img.alt || caption.slice(0, 120) || (author ? `Photo by ${author}` : 'Instagram photo'),
           source: src
         });
@@ -1494,19 +1526,23 @@ export function scanPageInTab(includeBackgrounds) {
     });
 
     // 2. Process grid items on User Profile, Explore, Reels
-    const gridLinks = [...document.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]')];
+    const gridLinks = [...document.querySelectorAll('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]')];
     gridLinks.forEach(link => {
       const href = link.href || '';
       const postId = getInstagramShortcode(href);
       if (!postId) return;
-      const postUrl = `https://www.instagram.com/p/${postId}/`;
+      const postUrl = `https://www.instagram.com/${/\/reels?\//i.test(href) ? 'reel' : 'p'}/${postId}/`;
 
       const fiberItems = readInstagramMedia(link);
       if (fiberItems && fiberItems.length > 0) {
+        const domPoster = link.querySelector('img')?.currentSrc || link.querySelector('img')?.src || '';
         link.querySelectorAll('img, video').forEach(el => processedIgMedia.add(el));
         fiberItems.forEach(item => {
-          add(item.url, item.type, null, item.poster || '', {
+          const itemPoster = [item.poster, item.thumbnail, item.previewImage, domPoster, item.previewUrl].find(isInstagramPosterUrl) || '';
+          add(item.url, item.type, null, itemPoster, {
             ...item,
+            poster: itemPoster,
+            previewUrl: item.type === 'video' ? itemPoster : (item.previewUrl || itemPoster),
             postId: item.postId || postId,
             author: item.author || profileAuthor,
             postUrl,
@@ -1518,7 +1554,7 @@ export function scanPageInTab(includeBackgrounds) {
       }
 
       const vid = link.querySelector('video');
-      const poster = extractInstagramPoster(link);
+      const poster = link.querySelector('img')?.currentSrc || link.querySelector('img')?.src || (vid?.poster || vid?.getAttribute('poster')) || '';
       const isReelOrVideoLink = /\/reel\//i.test(href) ||
         Boolean(link.querySelector('svg[aria-label="Reel"], svg[aria-label="Clip"], span[aria-label="Reel"], [aria-label*="reel" i], [aria-label*="clip" i], [aria-label*="video" i]'));
 
@@ -1529,7 +1565,7 @@ export function scanPageInTab(includeBackgrounds) {
         let vidSrc = (vid && !vid.currentSrc?.startsWith('blob:') && vid.currentSrc) || (vid && !vid.src?.startsWith('blob:') && vid.src) || '';
         const dur = (vid && typeof vid.duration === 'number' && Number.isFinite(vid.duration) && vid.duration > 0) ? Math.round(vid.duration) : 0;
         const hashtags = tagFromPath ? [tagFromPath] : [];
-        add(vidSrc || poster || postUrl, 'video', vid || link, poster, {
+        add(vidSrc || postUrl, 'video', vid || link, poster, {
           site: 'instagram',
           postId,
           author: profileAuthor,
@@ -1539,7 +1575,7 @@ export function scanPageInTab(includeBackgrounds) {
           pageUrl: postUrl,
           duration: dur,
           alt: link.querySelector('img')?.alt || 'Instagram reel',
-          source: vidSrc || poster,
+          source: vidSrc,
           playbackPage: vidSrc ? '' : postUrl
         });
         return; // Skip image processing for this post
@@ -1607,7 +1643,8 @@ export function scanPageInTab(includeBackgrounds) {
         const authorName = tweet.querySelector('[data-testid="User-Name"] span')?.textContent?.trim() || '';
         const authorHandleMatch = tweet.querySelector('[data-testid="User-Name"]')?.textContent?.match(/@([a-zA-Z0-9_]+)/);
         const authorHandle = authorHandleMatch ? authorHandleMatch[1] : '';
-        add(src, 'image', n, '', { postUrl, tweetText, authorName, authorHandle, site: 'x' });
+        const hashtags = extractHashtags(tweetText);
+        add(src, 'image', n, '', { postUrl, tweetText, hashtags, authorName, authorHandle, site: 'x' });
         return;
       }
     }
@@ -1623,7 +1660,7 @@ export function scanPageInTab(includeBackgrounds) {
     if (site.key === 'youtube') return;
     if (site.key === 'instagram') {
       if (processedIgMedia.has(n)) return;
-      const postLink = n.closest('article')?.querySelector('a[href*="/p/"], a[href*="/reel/"]') || n.closest('a[href*="/p/"], a[href*="/reel/"]');
+      const postLink = n.closest('article')?.querySelector('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]') || n.closest('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]');
       const postId = getInstagramShortcode(postLink?.href || location.href);
       if (postId) {
         processedIgMedia.add(n);
@@ -1905,6 +1942,7 @@ export function scanPageInTab(includeBackgrounds) {
       const postUrl = getXStatusUrl(tweet) || (location.pathname.includes('/status/') ? location.href.split('?')[0] : '');
       const tweetText = tweet.querySelector('[data-testid="tweetText"]')?.innerText?.trim() ||
                         tweet.querySelector('[data-testid="tweetText"]')?.textContent?.trim() || '';
+      const hashtags = extractHashtags(tweetText);
       const authorName = tweet.querySelector('[data-testid="User-Name"] span')?.textContent?.trim() || '';
       const authorHandleMatch = tweet.querySelector('[data-testid="User-Name"]')?.textContent?.match(/@([a-zA-Z0-9_]+)/);
       const authorHandle = authorHandleMatch ? authorHandleMatch[1] : '';
@@ -1941,6 +1979,7 @@ export function scanPageInTab(includeBackgrounds) {
             site: 'x',
             poster: preview,
             tweetText,
+            hashtags,
             authorName,
             authorHandle
           });

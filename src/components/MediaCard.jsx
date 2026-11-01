@@ -8,7 +8,8 @@ import {
   getPlayableVideoUrl,
   getGifAnimatedUrl,
   isDisallowedMediaUrl,
-  isProfileOrAvatarUrl
+  isProfileOrAvatarUrl,
+  isDirectPlayableVideo
 } from '../utils/mediaHelpers.js';
 import { getSavedObjectUrl } from '../services/storage.js';
 import { resolveXVideos } from '../utils/xSyndication.js';
@@ -40,11 +41,14 @@ function MediaCard({
   const [videoDuration, setVideoDuration] = useState(item.duration || null);
 
   const videoRef = useRef(null);
+  const isHoveredRef = useRef(false);
   const retryTimerRef = useRef(null);
+  const posterRetryTimerRef = useRef(null);
 
   useEffect(() => {
     return () => {
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (posterRetryTimerRef.current) clearTimeout(posterRetryTimerRef.current);
     };
   }, []);
 
@@ -71,19 +75,29 @@ function MediaCard({
     if (!u || typeof u !== 'string') return false;
     if (/^data:image\//i.test(u)) return true;
     if (/\.(jpe?g|png|webp|avif|heic)(?:[?#]|$)/i.test(u)) return true;
+    if (isDirectPlayableVideo(u)) return false;
     if (/(?:cdninstagram\.com|fbcdn\.net)\/.*(?:[?&]stp=dst-jpg|\/t51\.|\.jpg|\.webp)/i.test(u)) return true;
-    if (/(?:cdninstagram\.com|fbcdn\.net)/i.test(u) && !/\.(mp4|webm|mov)(?:[?#]|$)/i.test(u) && !/[?&]format=mp4/i.test(u)) return true;
+    if (/(?:cdninstagram\.com|fbcdn\.net)/i.test(u)) return true;
     return false;
+  };
+
+  const selectPoster = () => {
+    const candidates = [
+      [item.poster, true], [item.thumbnail, true], [item.previewImage, true], [item.previewUrl, true],
+      [item.url, false], [item.source, false], ...(item.fallbackUrls || []).map(url => [url, false])
+    ];
+    return candidates.find(([url, explicit]) => {
+      if (!url || typeof url !== 'string' || isDisallowedMediaUrl(url) || isProfileOrAvatarUrl(url) || isDirectPlayableVideo(url)) return false;
+      if (/^data:image\/svg\+xml/i.test(url) || /instagram\.com\/(?:p|reel|reels)\//i.test(url)) return false;
+      return isLikelyImageUrl(url) || (explicit && /^https?:\/\//i.test(url));
+    })?.[0] || '';
   };
 
   const isGif = isItemGif(item);
   const playableUrl = item.savedFile ? (resolvedSrc || getPlayableVideoUrl(item)) : getPlayableVideoUrl(item);
   const isVideo = item.type === 'video' || Boolean(playableUrl);
   const gifAnimatedUrl = isGif ? getGifAnimatedUrl(item) : '';
-  const poster = item.poster || item.previewUrl || item.thumbnail || item.previewImage ||
-    (isLikelyImageUrl(item.url) ? item.url : '') ||
-    (isLikelyImageUrl(item.source) ? item.source : '') ||
-    (Array.isArray(item.fallbackUrls) ? item.fallbackUrls.find(u => isLikelyImageUrl(u)) : '') || '';
+  const poster = selectPoster();
 
   // Track video poster and playable URL with fallbacks
   const [posterSrc, setPosterSrc] = useState(poster || '');
@@ -95,10 +109,7 @@ function MediaCard({
   const [videoFallbackIndex, setVideoFallbackIndex] = useState(-1);
 
   useEffect(() => {
-    const candidate = item.poster || item.previewUrl || item.thumbnail || item.previewImage ||
-      (isLikelyImageUrl(item.url) ? item.url : '') ||
-      (isLikelyImageUrl(item.source) ? item.source : '') ||
-      (Array.isArray(item.fallbackUrls) ? item.fallbackUrls.find(u => isLikelyImageUrl(u)) : '') || '';
+    const candidate = selectPoster();
     setPosterSrc(candidate);
     setPosterBroken(false);
     setPosterFallbackIndex(-1);
@@ -187,11 +198,20 @@ function MediaCard({
       return;
     }
 
+    // Instagram URLs are short lived and retrying the same signed URL cannot
+    // recover it. Move through available variants once, then expose manual retry.
+    if (item.site === 'instagram') {
+      setImgBroken(true);
+      setIsRetrying(false);
+      return;
+    }
+
     // 2. Automatic retry with backoff on primary candidate
     if (retryCount < MAX_RETRIES) {
       setIsRetrying(true);
       const delay = Math.min(1000 * Math.pow(1.5, retryCount), 3000) + Math.random() * 200;
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (posterRetryTimerRef.current) clearTimeout(posterRetryTimerRef.current);
       retryTimerRef.current = setTimeout(() => {
         setIsRetrying(false);
         setRetryCount(prev => prev + 1);
@@ -225,15 +245,6 @@ function MediaCard({
       return;
     }
 
-    if (posterRetryCount < MAX_RETRIES) {
-      const delay = 1000 * (posterRetryCount + 1);
-      setTimeout(() => {
-        setPosterRetryCount(prev => prev + 1);
-        setRetryNonce(prev => prev + 1);
-        if (unique.length > 0) setPosterSrc(unique[0]);
-      }, delay);
-      return;
-    }
     setPosterBroken(true);
   };
 
@@ -245,7 +256,7 @@ function MediaCard({
       item.source,
       item.url,
       ...(item.fallbackUrls || [])
-    ].filter(u => u && typeof u === 'string' && (/\.mp4(?:[?#]|$)/i.test(u) || /[?&]format=mp4/i.test(u)));
+    ].filter(u => u && typeof u === 'string' && isDirectPlayableVideo(u));
     const unique = [...new Set(videoCandidates)];
 
     const currentIdx = unique.indexOf(currentVideoUrl);
@@ -254,18 +265,8 @@ function MediaCard({
       return;
     }
 
-    if (retryCount < MAX_RETRIES) {
-      setIsRetrying(true);
-      const delay = Math.min(1000 * Math.pow(1.5, retryCount), 3000);
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = setTimeout(() => {
-        setIsRetrying(false);
-        setRetryCount(prev => prev + 1);
-        setRetryNonce(prev => prev + 1);
-        if (unique.length > 0) setCurrentVideoUrl(unique[0]);
-      }, delay);
-      return;
-    }
+    setIsVideoPlaying(false);
+    if (!posterSrc) setImgBroken(true);
     setIsVideoPlaying(false);
   };
 
@@ -291,6 +292,9 @@ function MediaCard({
       });
     } else if (isGif && gifAnimatedUrl && !playableUrl) {
       setResolvedSrc(gifAnimatedUrl);
+    } else if (item.site === 'instagram' && item.type === 'video') {
+      setIsRetrying(false);
+      if (isDirectPlayableVideo(playableUrl)) setCurrentVideoUrl(playableUrl);
     } else {
       const initial = item.url || item.previewUrl || item.source || '';
       setResolvedSrc(initial);
@@ -327,9 +331,28 @@ function MediaCard({
 
   const shouldAttachVideo = isGif || (prefs.autoplayMode === 'grid' && !isViewerOpen) || isHovered;
 
+  // Attach the source first, then start playback. Calling play() in the pointer
+  // handler can race React's render that adds `src`, leaving hover previews paused.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !currentVideoUrl || isViewerOpen || isGif) return;
+
+    const shouldPlay = prefs.autoplayMode === 'grid' || (prefs.autoplayMode === 'hover' && isHoveredRef.current);
+    if (!shouldPlay) {
+      video.pause();
+      return;
+    }
+
+    if (!shouldAttachVideo) return;
+    video.muted = true;
+    video.defaultMuted = true;
+    video.play().catch(() => {});
+  }, [currentVideoUrl, isHovered, isGif, isViewerOpen, prefs.autoplayMode, shouldAttachVideo]);
+
   // File extension badge for saved library cards
+  const extSource = item.fileName || item.sourceUrl || item.url || '';
   const ext = item.savedFile
-    ? (item.fileName || item.sourceUrl || item.url).match(/\.([a-z0-9]{3,4})(?:[?#]|$)/i)?.[1]?.toUpperCase()
+    ? extSource.match(/\.([a-z0-9]{3,4})(?:[?#]|$)/i)?.[1]?.toUpperCase()
     : '';
 
   const durationFormatted = formatDuration(videoDuration || item.duration);
@@ -363,20 +386,11 @@ function MediaCard({
         onClick={() => onOpenViewer?.(index)}
         onMouseEnter={() => {
           if (isViewerOpen) return;
+          isHoveredRef.current = true;
           setIsHovered(true);
-          if (isVideo && videoRef.current && currentVideoUrl) {
-            if (!videoRef.current.src || videoRef.current.src !== currentVideoUrl) {
-              videoRef.current.src = currentVideoUrl;
-            }
-            videoRef.current.muted = true;
-            videoRef.current.defaultMuted = true;
-            const playPromise = videoRef.current.play();
-            if (playPromise !== undefined) {
-              playPromise.catch(() => {});
-            }
-          }
         }}
         onMouseLeave={() => {
+          isHoveredRef.current = false;
           setIsHovered(false);
           if (!isGif && prefs.autoplayMode !== 'grid' && isVideo && videoRef.current) {
             videoRef.current.pause();
@@ -560,28 +574,28 @@ function MediaCard({
           {metaText}
         </span>
 
-        {item.downloadId && item.type === 'video' && (
+        {item.downloadId && item.type === 'video' && typeof chrome !== 'undefined' && chrome.downloads?.open && (
           <button
             className="card-more saved-play"
             title="Open saved video"
             aria-label="Open saved video"
             onClick={e => {
               e.stopPropagation();
-              chrome.downloads?.open(item.downloadId);
+              if (typeof chrome !== 'undefined' && chrome.downloads?.open) chrome.downloads.open(item.downloadId);
             }}
           >
             ▶
           </button>
         )}
 
-        {item.downloadId && (
+        {item.downloadId && typeof chrome !== 'undefined' && chrome.downloads?.show && (
           <button
             className="card-more saved-reveal"
             title="Show in Finder"
             aria-label="Show downloaded file in Finder"
             onClick={e => {
               e.stopPropagation();
-              chrome.downloads?.show(item.downloadId);
+              if (typeof chrome !== 'undefined' && chrome.downloads?.show) chrome.downloads.show(item.downloadId);
             }}
           >
             ▣

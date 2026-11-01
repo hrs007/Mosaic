@@ -219,17 +219,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.tabs.create({ url: chrome.runtime.getURL(`gallery.html?tabId=${message.tabId}`) });
   }
 
-  // Navigate Instagram tab to hashtag/profile and re-open Mosaic in extension view
-  if (message?.type === 'mosaic-navigate-to-instagram' && message.url) {
-    const targetTabId = message.tabId;
+  const attachGalleryAfterLoad = (targetTab) => {
+    if (!targetTab?.id || !message.keepGalleryOpen) return;
+    const listener = (tabId, changeInfo, tab) => {
+      if (tabId !== targetTab.id || changeInfo.status !== 'complete') return;
+      chrome.tabs.onUpdated.removeListener(listener);
+      setTimeout(() => toggleGallery(tab), 700);
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    setTimeout(() => {
+      try { chrome.tabs.onUpdated.removeListener(listener); } catch {}
+    }, 30000);
+  };
+
+  // Navigate to a social destination and re-open Mosaic in extension view.
+  if ((message?.type === 'mosaic-navigate-social' || message?.type === 'mosaic-navigate-to-instagram') && message.url) {
+    const senderTabId = sender?.tab?.id;
+    const targetTabId = Number(message.tabId) > 0 ? Number(message.tabId) : senderTabId;
     if (targetTabId) {
-      chrome.tabs.update(targetTabId, { url: message.url, active: true }, (updatedTab) => {
+      const onUpdatedTab = (updatedTab) => {
+        if (chrome.runtime.lastError || !updatedTab) {
+          if (message.keepGalleryOpen) chrome.tabs.create({ url: message.url, active: true }, attachGalleryAfterLoad);
+          return;
+        }
         if (message.keepGalleryOpen) {
           const onTabUpdated = (tabId, changeInfo, tab) => {
             if (tabId === targetTabId && changeInfo.status === 'complete') {
               chrome.tabs.onUpdated.removeListener(onTabUpdated);
               setTimeout(() => {
-                toggleGallery(tab);
+                chrome.tabs.get(targetTabId, currentTab => {
+                  if (!chrome.runtime.lastError && currentTab) toggleGallery(currentTab);
+                });
               }, 700);
             }
           };
@@ -238,21 +258,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             try { chrome.tabs.onUpdated.removeListener(onTabUpdated); } catch {}
           }, 30000);
         }
-      });
+      };
+      chrome.tabs.update(targetTabId, { url: message.url, active: true }, onUpdatedTab);
     } else {
-      chrome.tabs.create({ url: message.url, active: true }, (newTab) => {
-        if (message.keepGalleryOpen && newTab?.id) {
-          const onTabUpdated = (tabId, changeInfo, tab) => {
-            if (tabId === newTab.id && changeInfo.status === 'complete') {
-              chrome.tabs.onUpdated.removeListener(onTabUpdated);
-              setTimeout(() => {
-                toggleGallery(tab);
-              }, 700);
-            }
-          };
-          chrome.tabs.onUpdated.addListener(onTabUpdated);
-        }
-      });
+      chrome.tabs.create({ url: message.url, active: true }, attachGalleryAfterLoad);
     }
   }
 

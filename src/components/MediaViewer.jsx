@@ -11,7 +11,9 @@ import {
   isProfileOrAvatarUrl,
   canonicalMediaId,
   getRedditPostId,
-  parseRedditResolution
+  getInstagramMediaCode,
+  parseRedditResolution,
+  isDirectPlayableVideo
 } from '../utils/mediaHelpers.js';
 import { getSavedObjectUrl } from '../services/storage.js';
 import { resolveXVideos } from '../utils/xSyndication.js';
@@ -37,7 +39,8 @@ export default function MediaViewer() {
     downloadItem,
     removeSavedFile,
     showToast,
-    navigateToInstagram
+    navigateToInstagram,
+    navigateToSocial
   } = useGallery();
 
   const item = filtered[viewerIndex];
@@ -83,14 +86,20 @@ export default function MediaViewer() {
   const isLikelyImageUrl = (u) => {
     if (!u || typeof u !== 'string') return false;
     if (/^data:image\//i.test(u)) return true;
-    if (/\.(jpe?g|png|webp|avif|heic)(?:[?#]|$)/i.test(u)) return true;
+    if (/\.(jpe?g|png|webp|avif|heic)(?:[?#]|$)/i.test(u)) return !isDirectPlayableVideo(u);
+    if (isDirectPlayableVideo(u)) return false;
     if (/(?:cdninstagram\.com|fbcdn\.net)\/.*(?:[?&]stp=dst-jpg|\/t51\.|\.jpg|\.webp)/i.test(u)) return true;
     if (/(?:cdninstagram\.com|fbcdn\.net)/i.test(u) && !/\.(mp4|webm|mov)(?:[?#]|$)/i.test(u) && !/[?&]format=mp4/i.test(u)) return true;
     return false;
   };
-  const viewerPoster = item?.poster || item?.previewUrl || item?.thumbnail || item?.previewImage ||
-    (isLikelyImageUrl(item?.url) ? item.url : '') ||
-    (isLikelyImageUrl(item?.source) ? item.source : '') || '';
+  const viewerPoster = [
+    [item?.poster, true], [item?.thumbnail, true], [item?.previewImage, true], [item?.previewUrl, true],
+    [item?.url, false], [item?.source, false], ...(item?.fallbackUrls || []).map(url => [url, false])
+  ].find(([url, explicit]) => {
+    if (!url || typeof url !== 'string' || isDisallowedMediaUrl(url) || isProfileOrAvatarUrl(url) || isDirectPlayableVideo(url)) return false;
+    if (/^data:image\/svg\+xml/i.test(url) || /instagram\.com\/(?:p|reel|reels)\//i.test(url)) return false;
+    return isLikelyImageUrl(url) || (explicit && /^https?:\/\//i.test(url));
+  })?.[0] || '';
 
   // Video resolution variants
   const videoVariants = useMemo(() => {
@@ -103,7 +112,7 @@ export default function MediaViewer() {
       item?.source,
       item?.sourceUrl,
       ...(item?.fallbackUrls || [])
-    ].filter(u => typeof u === 'string' && (/\.mp4(?:[?#]|$)/i.test(u) || /[?&]format=mp4/i.test(u)));
+    ].filter(u => typeof u === 'string' && isDirectPlayableVideo(u));
     const unique = [...new Set(rawUrls)];
     if (unique.length <= 1) return [];
 
@@ -138,18 +147,18 @@ export default function MediaViewer() {
         });
     }
     if (item.site === 'tumblr') {
-      const pId = item.postId ? String(item.postId).toLowerCase() : '';
+      const pId = String(item.postId || getInstagramMediaCode(item.postUrl || item.pageUrl || item.url)).toLowerCase();
       if (!pId) return [];
       return filtered
         .map((m, idx) => ({ item: m, index: idx }))
         .filter(x => x.item.site === 'tumblr' && String(x.item.postId || '').toLowerCase() === pId);
     }
     if (item.site === 'instagram') {
-      const pId = item.postId ? String(item.postId).toLowerCase() : '';
+      const pId = String(item.postId || getInstagramMediaCode(item.postUrl || item.pageUrl || item.url)).toLowerCase();
       if (!pId) return [];
       const siblings = filtered
         .map((m, idx) => ({ item: m, index: idx }))
-        .filter(x => x.item.site === 'instagram' && String(x.item.postId || '').toLowerCase() === pId);
+        .filter(x => x.item.site === 'instagram' && String(x.item.postId || getInstagramMediaCode(x.item.postUrl || x.item.pageUrl || x.item.url)).toLowerCase() === pId);
       return siblings.sort((a, b) => {
         const idxA = typeof a.item.galleryIndex === 'number' ? a.item.galleryIndex : 0;
         const idxB = typeof b.item.galleryIndex === 'number' ? b.item.galleryIndex : 0;
@@ -269,26 +278,12 @@ export default function MediaViewer() {
       item?.source,
       item?.url,
       ...(item?.fallbackUrls || [])
-    ].filter(u => u && typeof u === 'string' && (/\.mp4(?:[?#]|$)/i.test(u) || /[?&]format=mp4/i.test(u)));
+    ].filter(u => u && typeof u === 'string' && isDirectPlayableVideo(u));
     const unique = [...new Set(videoCandidates)];
 
     const currentIdx = unique.indexOf(currentVideoUrl);
     if (currentIdx !== -1 && currentIdx + 1 < unique.length) {
       setCurrentVideoUrl(unique[currentIdx + 1]);
-      return;
-    }
-
-    // 2. Retry with backoff
-    if (retryCount < MAX_RETRIES) {
-      setIsRetrying(true);
-      const delay = Math.min(1000 * Math.pow(1.5, retryCount), 3000) + Math.random() * 200;
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = setTimeout(() => {
-        setIsRetrying(false);
-        setRetryCount(prev => prev + 1);
-        setRetryNonce(prev => prev + 1);
-        if (unique.length > 0) setCurrentVideoUrl(unique[0]);
-      }, delay);
       return;
     }
 
@@ -315,6 +310,10 @@ export default function MediaViewer() {
       });
     } else if (isGif && gifAnimatedUrl && !isVideo) {
       setResolvedUrl(gifAnimatedUrl);
+    } else if (item?.site === 'instagram' && item?.type === 'video') {
+      const retryUrl = isDirectPlayableVideo(playableUrl) ? playableUrl : (item?.source || item?.url || '');
+      setCurrentVideoUrl(retryUrl);
+      setResolvedUrl(item?.poster || item?.previewUrl || '');
     } else {
       setResolvedUrl(item?.url || item?.previewUrl || item?.source || '');
     }
@@ -424,7 +423,9 @@ export default function MediaViewer() {
     });
   };
 
-  const directUrl = item?.source || item?.url || '';
+  const directUrl = item?.site === 'reddit'
+    ? [item.url, item.source, ...(item.fallbackUrls || [])].find(url => url && (/^https?:\/\/(?:i|preview|external-preview)\.redd\.it\//i.test(url) || /^https?:\/\/v\.redd\.it\//i.test(url) || /[?&]format=mp4(?:&|$)/i.test(url) || /\.(?:jpe?g|png|webp|avif|gif|mp4|webm)(?:[?#]|$)/i.test(url)) && !/reddit\.com\/(?:comments|user|r)\//i.test(url)) || ''
+    : item?.source || item?.url || '';
   const postOrPage = item?.postUrl || item?.pageUrl || '';
   const isDirectValid = directUrl && !/^(blob|data):/i.test(directUrl);
   const isPostDifferent = postOrPage && postOrPage !== directUrl;
@@ -483,7 +484,7 @@ export default function MediaViewer() {
   const canonicalId = item ? (item.id || canonicalMediaId(item.url, item)) : '';
   const isFav = item ? (favorites?.has(canonicalId) || favorites?.has(item.id)) : false;
   const handleToggleFavorite = () => {
-    if (item) toggleFavorite(item);
+    if (canonicalId) toggleFavorite(canonicalId);
   };
 
   const isFill = fitMode === 'fill';
@@ -583,7 +584,7 @@ export default function MediaViewer() {
                   referrerPolicy="no-referrer"
                 />
               )}
-              <p>Streamed by Instagram with MSE media blobs.</p>
+              <p>{item.playbackPage ? 'This Instagram video is streamed by the page and has no standalone playable file.' : 'Instagram did not provide a playable video file for this media.'}</p>
               <button
                 className="site-action"
                 onClick={() => navigateToInstagram ? navigateToInstagram(item.postUrl || item.pageUrl) : window.open(item.postUrl || item.pageUrl, '_blank', 'noopener')}
@@ -731,7 +732,7 @@ export default function MediaViewer() {
           gallerySiblings={gallerySiblings}
           currentGalleryPos={currentGalleryPos}
           onNavigateGallery={handleNavigateGallery}
-          onNavigateToInstagram={navigateToInstagram}
+          onNavigateToInstagram={navigateToSocial || navigateToInstagram}
         />
       </div>
 
@@ -757,7 +758,7 @@ export default function MediaViewer() {
         isPostDifferent={isPostDifferent}
         playbackRate={playbackRate}
         onSelectPlaybackRate={handleSelectPlaybackRate}
-        onNavigateToInstagram={navigateToInstagram}
+        onNavigateToInstagram={navigateToSocial || navigateToInstagram}
         isLooping={isLooping}
         onToggleLoop={handleLoopToggle}
         autoplayViewer={prefs.autoplayViewer}
