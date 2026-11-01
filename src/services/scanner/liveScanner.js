@@ -205,6 +205,432 @@ export function scanLiveNowInTab() {
   const isX = host === 'x.com' || host.endsWith('.x.com') || host.includes('twitter.com');
   const isYouTube = host.includes('youtube.com') || host.includes('youtu.be');
   const isTumblr = host.includes('tumblr.com');
+  const isInstagram = host.includes('instagram.com');
+
+  const bestSrcset = (value = '') => {
+    if (!value || typeof value !== 'string') return '';
+    const parts = value.split(/,\s*(?=https?:)/);
+    const candidates = [];
+    for (const part of parts) {
+      const bits = part.trim().split(/\s+/);
+      const url = bits[0];
+      const metric = parseFloat(bits[1]) || 0;
+      if (url && !isDisallowedMediaUrl(url)) {
+        candidates.push({ url, metric });
+      }
+    }
+    candidates.sort((a, b) => b.metric - a.metric);
+    return candidates[0]?.url || '';
+  };
+
+  const getInstagramShortcode = (url) => {
+    if (!url) return '';
+    const m = String(url).match(/(?:instagram\.com\/(?:p|reel|reels)\/|\/p\/|\/reel\/|\/reels\/)([a-zA-Z0-9_-]+)/i);
+    return m ? m[1] : '';
+  };
+
+  const extractHashtags = (text) => {
+    if (!text || typeof text !== 'string') return [];
+    const matches = text.match(/#([a-zA-Z0-9_\u0080-\uffff]+)/g);
+    if (!matches) return [];
+    return [...new Set(matches.map(m => m.slice(1).toLowerCase()))];
+  };
+
+  const extractMentions = (text) => {
+    if (!text || typeof text !== 'string') return [];
+    const matches = text.match(/@([a-zA-Z0-9_\.]+)/g);
+    if (!matches) return [];
+    return [...new Set(matches.map(m => m.slice(1)))];
+  };
+
+  const getInstagramProfileFromPath = (pathname = '') => {
+    try {
+      const path = (pathname || location.pathname || '').replace(/^\/+|\/+$/g, '');
+      const parts = path.split('/');
+      const first = parts[0] || '';
+      const reserved = new Set(['', 'p', 'reel', 'reels', 'stories', 'explore', 'direct', 'accounts', 'developer', 'about', 'legal', 'terms', 'privacy', 'directory', 'tag', 'tags', 'archive']);
+      if (first && !reserved.has(first.toLowerCase()) && /^[a-zA-Z0-9_\.]+$/.test(first)) {
+        return first;
+      }
+    } catch {}
+    return '';
+  };
+
+  const getInstagramTagFromPath = (pathname = '') => {
+    try {
+      const path = pathname || location.pathname || '';
+      const m = path.match(/\/explore\/tags\/([^\/?#]+)/i) || path.match(/\/tags\/([^\/?#]+)/i);
+      return m ? decodeURIComponent(m[1]) : '';
+    } catch {}
+    return '';
+  };
+
+  const captureVideoFrame = (vid) => {
+    if (!vid) return '';
+    try {
+      if (vid.videoWidth > 0 && vid.videoHeight > 0) {
+        const canvas = document.createElement('canvas');
+        const maxDim = 720;
+        let w = vid.videoWidth;
+        let h = vid.videoHeight;
+        if (w > maxDim || h > maxDim) {
+          if (w >= h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(vid, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          if (dataUrl && dataUrl.length > 500) return dataUrl;
+        }
+      }
+    } catch {}
+    return '';
+  };
+
+  const extractInstagramPoster = (container) => {
+    if (!container) return '';
+    let root = container;
+    if (root.matches?.('video')) {
+      root = root.closest('a[href*="/p/"], a[href*="/reel/"], article, div[role="dialog"]') || root.parentElement?.parentElement || root.parentElement || root;
+    }
+    if (!root.querySelector?.('img, picture source, canvas, [style*="background-image"], [style*="background:"]')) {
+      const up = root.closest?.('a[href*="/p/"], a[href*="/reel/"], article, div[role="dialog"]');
+      if (up) root = up;
+    }
+
+    // 0. Container itself is an img
+    if (root.matches?.('img')) {
+      const s = bestSrcset(root.getAttribute('srcset') || root.getAttribute('data-srcset') || '') ||
+                root.currentSrc ||
+                root.src ||
+                root.getAttribute('data-src') ||
+                root.getAttribute('data-lazy-src') ||
+                root.getAttribute('data-original') || '';
+      if (s && !isDisallowedMediaUrl(s) && !isProfileOrAvatarUrl(s) && !s.startsWith('data:image/svg') && !s.includes('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')) {
+        return s;
+      }
+    }
+
+    // 1. Picture source srcset
+    const picSources = [...root.querySelectorAll('picture source')];
+    for (const s of picSources) {
+      const srcset = s.getAttribute('srcset') || s.getAttribute('data-srcset') || '';
+      const best = bestSrcset(srcset);
+      if (best && !isDisallowedMediaUrl(best) && !isProfileOrAvatarUrl(best)) return best;
+    }
+
+    // 2. Video element poster attribute or frame capture
+    const vids = root.matches?.('video') ? [root] : [...root.querySelectorAll('video')];
+    for (const vid of vids) {
+      const vPoster = vid.getAttribute('poster') || vid.poster || '';
+      if (vPoster && !vPoster.startsWith('blob:') && !isDisallowedMediaUrl(vPoster) && !isProfileOrAvatarUrl(vPoster)) {
+        return vPoster;
+      }
+      const frame = captureVideoFrame(vid);
+      if (frame) return frame;
+    }
+
+    // 3. Img tags (excluding headers/avatars and 1x1 GIF placeholders)
+    const imgs = [...root.querySelectorAll('img')].filter(img => {
+      if (img.closest('header, nav, [role="navigation"]') || /avatar|profile picture/i.test(img.alt || '') || img.alt === 'Avatar') return false;
+      return true;
+    });
+    for (const img of imgs) {
+      const src = bestSrcset(img.getAttribute('srcset') || img.getAttribute('data-srcset') || '') ||
+                  img.currentSrc ||
+                  img.src ||
+                  img.getAttribute('data-src') ||
+                  img.getAttribute('data-lazy-src') ||
+                  img.getAttribute('data-original') || '';
+      if (src && !isDisallowedMediaUrl(src) && !isProfileOrAvatarUrl(src) && !src.startsWith('data:image/svg') && !src.includes('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')) {
+        return src;
+      }
+    }
+
+    // 4. Canvas tags (Instagram blurhash/preview frames)
+    const canvases = root.matches?.('canvas') ? [root] : [...root.querySelectorAll('canvas')];
+    for (const c of canvases) {
+      try {
+        if (c.width > 20 && c.height > 20) {
+          const dUrl = c.toDataURL('image/jpeg', 0.82);
+          if (dUrl && dUrl.length > 500) return dUrl;
+        }
+      } catch {}
+    }
+
+    // 5. Background-image (both inline and computed)
+    const bgEls = [...root.querySelectorAll('[style*="background-image"], [style*="background:"]')];
+    for (const el of bgEls) {
+      const bg = el.style.backgroundImage || el.style.background || '';
+      const m = bg.match(/url\(['"]?([^'")]+)['"]?\)/i);
+      if (m && m[1] && !isDisallowedMediaUrl(m[1]) && !isProfileOrAvatarUrl(m[1])) {
+        return m[1];
+      }
+    }
+
+    try {
+      const cStyle = window.getComputedStyle(root);
+      const cBg = cStyle?.backgroundImage || '';
+      const m = cBg.match(/url\(['"]?([^'")]+)['"]?\)/i);
+      if (m && m[1] && !isDisallowedMediaUrl(m[1]) && !isProfileOrAvatarUrl(m[1])) {
+        return m[1];
+      }
+    } catch {}
+
+    // 6. Recent Instagram photo entries from resource performance
+    try {
+      const entries = performance.getEntriesByType('resource');
+      for (let i = entries.length - 1; i >= 0 && i >= entries.length - 30; i--) {
+        const name = entries[i].name;
+        if (name && /(?:cdninstagram\.com|fbcdn\.net)\/.*(?:[?&]stp=dst-jpg|\/v\/t51\.|\.jpg|\.webp)/i.test(name) &&
+            !isDisallowedMediaUrl(name) && !isProfileOrAvatarUrl(name)) {
+          return name;
+        }
+      }
+    } catch {}
+
+    return '';
+  };
+
+  const cleanInstagramVideoUrl = (url) => {
+    if (!url || typeof url !== 'string') return '';
+    try {
+      const u = new URL(url);
+      u.searchParams.delete('bytestart');
+      u.searchParams.delete('byteend');
+      return u.href;
+    } catch {
+      return url.replace(/([?&])byte(?:start|end)=\d+(&|$)/gi, '$1').replace(/[?&]$/, '');
+    }
+  };
+
+  const igVariantCache = new WeakMap();
+  const readInstagramMedia = (container) => {
+    if (!container) return [];
+    if (igVariantCache.has(container)) return igVariantCache.get(container);
+
+    const seen = new WeakSet();
+    let checked = 0;
+    const found = [];
+
+    const parseMediaObj = (obj, meta = {}) => {
+      if (!obj || typeof obj !== 'object') return null;
+
+      const code = obj.code || obj.shortcode || meta.postId || '';
+      const user = obj.user || obj.owner || {};
+      const username = typeof user.username === 'string' ? user.username : (meta.author || getInstagramProfileFromPath() || '');
+      const caption = typeof obj.caption === 'string'
+        ? obj.caption
+        : (obj.caption?.text || obj.edge_media_to_caption?.edges?.[0]?.node?.text || meta.caption || '');
+      const rawLikes = obj.like_count != null ? obj.like_count : (obj.edge_liked_by?.count != null ? obj.edge_liked_by.count : (obj.edge_media_preview_like?.count != null ? obj.edge_media_preview_like.count : meta.likes));
+      const likes = (rawLikes != null && Number(rawLikes) > 0) ? Number(rawLikes) : (meta.likes || undefined);
+      const rawComments = obj.comment_count != null ? obj.comment_count : (obj.edge_media_to_comment?.count != null ? obj.edge_media_to_comment.count : meta.commentCount);
+      const comments = (rawComments != null && Number(rawComments) > 0) ? Number(rawComments) : (meta.commentCount || undefined);
+      const postUrl = code ? `https://www.instagram.com/p/${code}/` : (meta.postUrl || '');
+      const tagFromPath = getInstagramTagFromPath();
+      const hashtags = extractHashtags(caption);
+      if (tagFromPath && !hashtags.includes(tagFromPath)) hashtags.push(tagFromPath);
+      const mentions = extractMentions(caption);
+
+      const carousel = obj.carousel_media || obj.edge_sidecar_to_children?.edges?.map(e => e.node) || [];
+      if (Array.isArray(carousel) && carousel.length > 0) {
+        carousel.forEach((cItem, cIdx) => {
+          const parsed = parseMediaObj(cItem, {
+            ...meta,
+            postId: code,
+            author: username,
+            caption,
+            hashtags,
+            mentions,
+            tags: hashtags,
+            likes,
+            commentCount: comments,
+            postUrl,
+            galleryIndex: cIdx,
+            galleryTotal: carousel.length,
+            isGallery: true
+          });
+          if (parsed) found.push(parsed);
+        });
+        return null;
+      }
+
+      const videoVersions = obj.video_versions || obj.videoVersions;
+      const isVid = obj.is_video || obj.media_type === 2 || (Array.isArray(videoVersions) && videoVersions.length > 0) || Boolean(obj.video_url || obj.videoUrl || obj.progressive_download_url || obj.dash_manifest);
+
+      if (isVid) {
+        let bestVid = typeof obj.video_url === 'string' ? obj.video_url : (typeof obj.videoUrl === 'string' ? obj.videoUrl : '');
+        if (!bestVid && typeof obj.progressive_download_url === 'string') {
+          bestVid = obj.progressive_download_url;
+        }
+        if (!bestVid && typeof obj.dash_manifest === 'string') {
+          const m = obj.dash_manifest.match(/<BaseURL>([^<]+?\.mp4[^<]*?)<\/BaseURL>/i);
+          if (m && m[1]) bestVid = m[1].replace(/&amp;/g, '&');
+        }
+
+        const fallbacks = [];
+        let maxPix = 0;
+        let vW = 0, vH = 0;
+
+        if (Array.isArray(videoVersions)) {
+          for (const v of videoVersions) {
+            if (!v?.url) continue;
+            const cleaned = cleanInstagramVideoUrl(v.url);
+            fallbacks.push(cleaned);
+            const pix = (v.width || 0) * (v.height || 0);
+            if (pix >= maxPix) {
+              maxPix = pix;
+              bestVid = cleaned;
+              vW = v.width || 0;
+              vH = v.height || 0;
+            }
+          }
+        }
+        if (bestVid) bestVid = cleanInstagramVideoUrl(bestVid);
+
+        let poster = '';
+        if (Array.isArray(obj.image_versions2?.candidates) && obj.image_versions2.candidates.length) {
+          const sorted = [...obj.image_versions2.candidates].sort((a, b) => ((b.width || 0) * (b.height || 0)) - ((a.width || 0) * (a.height || 0)));
+          poster = sorted[0]?.url || '';
+        }
+        if (!poster && typeof obj.display_url === 'string') poster = obj.display_url;
+        if (!poster && typeof obj.display_src === 'string') poster = obj.display_src;
+        if (!poster && typeof obj.thumbnail_src === 'string') poster = obj.thumbnail_src;
+        if (!poster && container) poster = extractInstagramPoster(container);
+
+        if (bestVid || poster) {
+          return {
+            type: bestVid ? 'video' : 'image',
+            url: bestVid || poster,
+            source: bestVid || poster,
+            poster,
+            previewUrl: poster || bestVid,
+            fallbackUrls: fallbacks,
+            width: vW || (obj.dimensions?.width) || 0,
+            height: vH || (obj.dimensions?.height) || 0,
+            duration: Math.round(obj.video_duration || 0),
+            postId: code,
+            author: username,
+            caption,
+            hashtags,
+            mentions,
+            tags: hashtags,
+            likes,
+            commentCount: comments,
+            postUrl: postUrl || location.href,
+            pageUrl: postUrl || location.href,
+            pageTitle: document.title,
+            site: 'instagram',
+            alt: caption.slice(0, 120) || (username ? `Video by ${username}` : 'Instagram video'),
+            ...meta
+          };
+        }
+      }
+
+      const candidates = obj.image_versions2?.candidates;
+      let bestImg = '';
+      let maxPix = 0;
+      let iW = 0, iH = 0;
+      const fallbacks = [];
+
+      if (Array.isArray(candidates)) {
+        for (const c of candidates) {
+          if (!c?.url) continue;
+          fallbacks.push(c.url);
+          const pix = (c.width || 0) * (c.height || 0);
+          if (pix >= maxPix) {
+            maxPix = pix;
+            bestImg = c.url;
+            iW = c.width || 0;
+            iH = c.height || 0;
+          }
+        }
+      } else if (typeof obj.display_url === 'string') {
+        bestImg = obj.display_url;
+      } else if (typeof obj.display_src === 'string') {
+        bestImg = obj.display_src;
+      }
+
+      if (bestImg) {
+        return {
+          type: 'image',
+          url: bestImg,
+          source: bestImg,
+          fallbackUrls: fallbacks,
+          width: iW || (obj.dimensions?.width) || 0,
+          height: iH || (obj.dimensions?.height) || 0,
+          postId: code,
+          author: username,
+          caption,
+          hashtags,
+          mentions,
+          tags: hashtags,
+          likes,
+          commentCount: comments,
+          postUrl: postUrl || location.href,
+          pageUrl: postUrl || location.href,
+          pageTitle: document.title,
+          site: 'instagram',
+          alt: caption.slice(0, 120) || (username ? `Photo by ${username}` : 'Instagram photo'),
+          ...meta
+        };
+      }
+
+      return null;
+    };
+
+    const inspectObj = (value, depth) => {
+      if (!value || typeof value !== 'object' || depth > 10 || checked++ > 3500 || seen.has(value)) return;
+      seen.add(value);
+
+      if (value.video_versions || value.videoVersions || value.video_url || value.videoUrl || value.dash_manifest || value.progressive_download_url || value.image_versions2 || value.carousel_media || value.edge_sidecar_to_children || (value.media_type && (value.video_url || value.display_url))) {
+        const item = parseMediaObj(value);
+        if (item) found.push(item);
+      } else if (Array.isArray(value.items)) {
+        value.items.forEach(it => {
+          const item = parseMediaObj(it);
+          if (item) found.push(item);
+        });
+      } else if (value.post || value.media || value.item) {
+        const item = parseMediaObj(value.post || value.media || value.item);
+        if (item) found.push(item);
+      }
+
+      for (const key of Object.keys(value)) {
+        if (/^(return|child|sibling|stateNode|_owner|_store|owner|elementType|type)$/i.test(key)) continue;
+        try { inspectObj(value[key], depth + 1); } catch {}
+      }
+    };
+
+    const nodes = [container, ...(container?.querySelectorAll?.('video, img, article, a[href*="/p/"], a[href*="/reel/"]') || [])];
+    for (const node of nodes) {
+      if (found.length >= 25) break;
+      for (const key of Object.keys(node)) {
+        if (key.startsWith('__reactFiber$') || key.startsWith('__reactInternalInstance$')) {
+          let fiber = node[key];
+          let fDepth = 0;
+          while (fiber && fDepth++ < 30) {
+            if (fiber.memoizedProps) inspectObj(fiber.memoizedProps, 0);
+            if (fiber.memoizedState) inspectObj(fiber.memoizedState, 0);
+            fiber = fiber.return;
+          }
+        } else if (key.startsWith('__reactProps$')) {
+          inspectObj(node[key], 0);
+        }
+      }
+    }
+
+    igVariantCache.set(container, found);
+    return found;
+  };
 
   const getVId = (url) => {
     if (!url || typeof url !== 'string') return '';
@@ -675,7 +1101,237 @@ export function scanLiveNowInTab() {
     });
   }
 
-  const standardItems = isYouTube ? [] : [...document.querySelectorAll('img,video,shreddit-player,[data-testid="tweet"] img')].map(node => {
+  const instagramItems = [];
+  const processedIgMedia = new Set();
+  if (isInstagram) {
+    const profileAuthor = getInstagramProfileFromPath();
+    const tagFromPath = getInstagramTagFromPath();
+
+    const articles = [...document.querySelectorAll('article')];
+    articles.forEach(article => {
+      const postLink = article.querySelector('a[href*="/p/"], a[href*="/reel/"]');
+      const postHref = postLink?.href || '';
+      const postId = getInstagramShortcode(postHref || location.href);
+      const postUrl = postId ? `https://www.instagram.com/p/${postId}/` : (postHref || location.href);
+
+      const authorEl = article.querySelector('header a[role="link"], header a[href^="/"], a[href^="/"][tabindex="0"]');
+      const author = authorEl?.textContent?.trim() || authorEl?.getAttribute('href')?.replace(/^\/|\/$/g, '') || profileAuthor || '';
+
+      const captionEl = article.querySelector('h1, span[dir="auto"], [data-testid="post-comment-root"]');
+      const caption = captionEl?.textContent?.trim() || '';
+
+      // Parse DOM likes and comments
+      let domLikes = undefined;
+      let domComments = undefined;
+      const likeTextEl = article.querySelector('section a[href*="/liked_by/"], section span');
+      const likeText = likeTextEl?.textContent || '';
+      const likeMatch = likeText.match(/([\d,.]+[KMBkmb]?)\s*likes?/i) || likeText.match(/(?:and|,)\s*([\d,.]+[KMBkmb]?)\s*others?/i);
+      if (likeMatch) domLikes = likeMatch[1];
+      const commentBtn = article.querySelector('a[href*="/p/"][role="button"], button[type="button"]');
+      const commentText = commentBtn?.textContent || '';
+      const commentMatch = commentText.match(/(?:view all|view)\s*([\d,.]+[KMBkmb]?)\s*comments?/i);
+      if (commentMatch) domComments = commentMatch[1];
+
+      const fiberItems = readInstagramMedia(article);
+      if (fiberItems && fiberItems.length > 0) {
+        article.querySelectorAll('img, video').forEach(el => processedIgMedia.add(el));
+        fiberItems.forEach(item => {
+          instagramItems.push({
+            ...item,
+            postId: item.postId || postId,
+            author: item.author || author,
+            caption: item.caption || caption,
+            likes: item.likes || domLikes,
+            commentCount: item.commentCount || domComments,
+            postUrl: item.postUrl || postUrl,
+            pageUrl: postUrl,
+            site: 'instagram'
+          });
+        });
+        return;
+      }
+
+      // DOM fallback for video
+      const articleVids = [...article.querySelectorAll('video')];
+      const poster = extractInstagramPoster(article);
+      articleVids.forEach(v => {
+        processedIgMedia.add(v);
+        let vidSrc = (v.currentSrc && !v.currentSrc.startsWith('blob:') ? v.currentSrc : '') || (v.src && !v.src.startsWith('blob:') ? v.src : '');
+        if (!vidSrc) {
+          try {
+            const perfMp4 = performance.getEntriesByType('resource')
+              .map(e => e.name)
+              .find(name => /(?:cdninstagram\.com|fbcdn\.net)\/.*\.mp4/i.test(name));
+            if (perfMp4) vidSrc = cleanInstagramVideoUrl(perfMp4);
+          } catch {}
+        }
+        const dur = (typeof v.duration === 'number' && Number.isFinite(v.duration) && v.duration > 0) ? Math.round(v.duration) : 0;
+        const mainUrl = vidSrc || poster || postUrl;
+        const hashtags = extractHashtags(caption);
+        if (tagFromPath && !hashtags.includes(tagFromPath)) hashtags.push(tagFromPath);
+        const mentions = extractMentions(caption);
+        instagramItems.push({
+          url: mainUrl,
+          type: 'video',
+          site: 'instagram',
+          postId,
+          author,
+          caption,
+          hashtags,
+          mentions,
+          tags: hashtags,
+          likes: domLikes,
+          commentCount: domComments,
+          postUrl,
+          pageUrl: postUrl,
+          pageTitle: document.title,
+          poster,
+          duration: dur,
+          width: v.videoWidth || 0,
+          height: v.videoHeight || 0,
+          alt: caption.slice(0, 120) || (author ? `Video by ${author}` : 'Instagram video'),
+          source: vidSrc || poster,
+          playbackPage: vidSrc ? '' : postUrl
+        });
+      });
+
+      if (articleVids.length > 0) {
+        article.querySelectorAll('img').forEach(el => processedIgMedia.add(el));
+        return;
+      }
+
+      // DOM fallback for images
+      const articleImgs = [...article.querySelectorAll('img')];
+      const validImgs = articleImgs.filter(img => {
+        if (processedIgMedia.has(img)) return false;
+        if (img.closest('header') || /avatar|profile picture/i.test(img.alt || '') || img.alt === 'Avatar') return false;
+        const s = img.currentSrc || img.src || '';
+        if (isProfileOrAvatarUrl(s) || isDisallowedMediaUrl(s)) return false;
+        return true;
+      });
+
+      const totalSlides = validImgs.length;
+      validImgs.forEach((img, idx) => {
+        processedIgMedia.add(img);
+        const src = bestSrcset(img.getAttribute('srcset') || '') || img.currentSrc || img.src || '';
+        if (!src || isDisallowedMediaUrl(src) || isProfileOrAvatarUrl(src)) return;
+        const hashtags = extractHashtags(caption);
+        if (tagFromPath && !hashtags.includes(tagFromPath)) hashtags.push(tagFromPath);
+        const mentions = extractMentions(caption);
+
+        instagramItems.push({
+          url: src,
+          type: 'image',
+          site: 'instagram',
+          postId,
+          author,
+          caption,
+          hashtags,
+          mentions,
+          tags: hashtags,
+          likes: domLikes,
+          commentCount: domComments,
+          postUrl,
+          pageUrl: postUrl,
+          pageTitle: document.title,
+          galleryIndex: totalSlides > 1 ? idx : null,
+          galleryTotal: totalSlides > 1 ? totalSlides : null,
+          isGallery: totalSlides > 1,
+          width: img.naturalWidth || 0,
+          height: img.naturalHeight || 0,
+          alt: img.alt || caption.slice(0, 120) || (author ? `Photo by ${author}` : 'Instagram photo'),
+          source: src
+        });
+      });
+    });
+
+    // Grid items (Profile, Explore, Reels)
+    const gridLinks = [...document.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]')];
+    gridLinks.forEach(link => {
+      const href = link.href || '';
+      const postId = getInstagramShortcode(href);
+      if (!postId) return;
+      const postUrl = `https://www.instagram.com/p/${postId}/`;
+
+      const fiberItems = readInstagramMedia(link);
+      if (fiberItems && fiberItems.length > 0) {
+        link.querySelectorAll('img, video').forEach(el => processedIgMedia.add(el));
+        fiberItems.forEach(item => {
+          instagramItems.push({
+            ...item,
+            postId: item.postId || postId,
+            author: item.author || profileAuthor,
+            postUrl,
+            pageUrl: postUrl,
+            site: 'instagram'
+          });
+        });
+        return;
+      }
+
+      const vid = link.querySelector('video');
+      const poster = extractInstagramPoster(link);
+      const isReelOrVideoLink = /\/reel\//i.test(href) ||
+        Boolean(link.querySelector('svg[aria-label="Reel"], svg[aria-label="Clip"], span[aria-label="Reel"], [aria-label*="reel" i], [aria-label*="clip" i], [aria-label*="video" i]'));
+
+      if ((vid || isReelOrVideoLink) && (!vid || !processedIgMedia.has(vid))) {
+        // Mark both video and image as processed so no duplicate image is added
+        link.querySelectorAll('img, video').forEach(el => processedIgMedia.add(el));
+
+        let vidSrc = (vid && !vid.currentSrc?.startsWith('blob:') && vid.currentSrc) || (vid && !vid.src?.startsWith('blob:') && vid.src) || '';
+        const dur = (vid && typeof vid.duration === 'number' && Number.isFinite(vid.duration) && vid.duration > 0) ? Math.round(vid.duration) : 0;
+        const hashtags = tagFromPath ? [tagFromPath] : [];
+        instagramItems.push({
+          url: vidSrc || poster || postUrl,
+          type: 'video',
+          site: 'instagram',
+          postId,
+          author: profileAuthor,
+          hashtags,
+          tags: hashtags,
+          postUrl,
+          pageUrl: postUrl,
+          pageTitle: document.title,
+          poster,
+          duration: dur,
+          width: vid?.videoWidth || 0,
+          height: vid?.videoHeight || 0,
+          alt: link.querySelector('img')?.alt || 'Instagram reel',
+          source: vidSrc || poster,
+          playbackPage: vidSrc ? '' : postUrl
+        });
+        return; // Skip image processing for this post
+      }
+
+      const img = link.querySelector('img');
+      if (img && !processedIgMedia.has(img)) {
+        if (/avatar|profile picture/i.test(img.alt || '') || img.closest('header')) return;
+        const src = bestSrcset(img.getAttribute('srcset') || '') || img.currentSrc || img.src || '';
+        if (src && !isDisallowedMediaUrl(src) && !isProfileOrAvatarUrl(src)) {
+          processedIgMedia.add(img);
+          const hashtags = tagFromPath ? [tagFromPath] : [];
+          instagramItems.push({
+            url: src,
+            type: 'image',
+            site: 'instagram',
+            postId,
+            author: profileAuthor,
+            hashtags,
+            tags: hashtags,
+            postUrl,
+            pageUrl: postUrl,
+            pageTitle: document.title,
+            width: img.naturalWidth || 0,
+            height: img.naturalHeight || 0,
+            alt: img.alt || 'Instagram photo',
+            source: src
+          });
+        }
+      }
+    });
+  }
+
+  const standardItems = (isYouTube || isInstagram) ? [] : [...document.querySelectorAll('img,video,shreddit-player,[data-testid="tweet"] img')].map(node => {
     if (isTumblr && (processedTumblrMedia.has(node) || node.closest?.('figure[aria-label="Avatar"], [data-testid="post-header-avatar"], .post-avatar, header') || node.alt === 'Avatar')) {
       return null;
     }
@@ -829,5 +1485,5 @@ export function scanLiveNowInTab() {
     };
   }).filter(Boolean);
 
-  return { url: location.href, items: [...ytItems, ...tumblrItems, ...standardItems] };
+  return { url: location.href, items: [...ytItems, ...tumblrItems, ...instagramItems, ...standardItems] };
 }

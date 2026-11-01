@@ -5,14 +5,17 @@ import {
   getRedditPostId,
   parseRedditResolution,
   pageIdentity,
-  isDisallowedMediaUrl
+  isDisallowedMediaUrl,
+  getInstagramShortcode,
+  isDirectPlayableVideo
 } from '../utils/mediaHelpers.js';
 import { resolveXVideos } from '../utils/xSyndication.js';
 import {
   scanPageInTab,
   scanLiveNowInTab,
   startLiveWatcherInTab,
-  advanceTabScroll
+  advanceTabScroll,
+  extractInstagramMainWorldMedia
 } from '../services/scanner.js';
 
 const isExtensionValid = () => {
@@ -64,6 +67,14 @@ export function usePageScanner({
       const idToIndex = new Map();
       const redditPostToIndex = new Map();
       const xPostToIndex = new Map();
+      const igPostToIndex = new Map();
+
+      const getIgPostKey = (item) => {
+        if (!item || item.site !== 'instagram') return '';
+        const pId = item.postId || getInstagramShortcode(item.postUrl || item.playbackPage || item.pageUrl || item.url);
+        if (!pId) return '';
+        return item.galleryIndex != null ? `${pId}:${item.galleryIndex}` : pId;
+      };
 
       const copyRichMeta = (target, source) => {
         if (source.subreddit && !target.subreddit) target.subreddit = source.subreddit;
@@ -89,7 +100,13 @@ export function usePageScanner({
         if (source.blogName && !target.blogName) target.blogName = source.blogName;
         if (source.rebloggedFrom && !target.rebloggedFrom) target.rebloggedFrom = source.rebloggedFrom;
         if (Array.isArray(source.tags) && source.tags.length && (!target.tags || !target.tags.length)) target.tags = source.tags;
+        if (Array.isArray(source.hashtags) && source.hashtags.length && (!target.hashtags || !target.hashtags.length)) target.hashtags = source.hashtags;
+        if (Array.isArray(source.mentions) && source.mentions.length && (!target.mentions || !target.mentions.length)) target.mentions = source.mentions;
         if (source.caption && !target.caption) target.caption = source.caption;
+        if (source.postId && !target.postId) target.postId = source.postId;
+        if (source.postUrl && !target.postUrl) target.postUrl = source.postUrl;
+        if (source.poster && !target.poster) target.poster = source.poster;
+        if (source.previewUrl && !target.previewUrl) target.previewUrl = source.previewUrl;
       };
 
       for (let i = 0; i < prevMedia.length; i++) {
@@ -109,6 +126,9 @@ export function usePageScanner({
           const xMediaId = (m.poster || m.source || m.url || '').match(/(?:amplify_video_thumb|ext_tw_video_thumb|tweet_video_thumb|amplify_video|ext_tw_video|tweet_video)\/(\d+)/i)?.[1];
           if (xMediaId) xPostToIndex.set(`mid:${xMediaId}`, i);
           if (m.postUrl) xPostToIndex.set(`purl:${m.postUrl}`, i);
+        } else if (m.site === 'instagram') {
+          const igKey = getIgPostKey(m);
+          if (igKey) igPostToIndex.set(igKey, i);
         }
       }
 
@@ -212,6 +232,135 @@ export function usePageScanner({
           }
         }
 
+        // Check Instagram post/carousel deduplication and upgrades
+        if (x.site === 'instagram') {
+          const igKey = getIgPostKey(x);
+          if (igKey && igPostToIndex.has(igKey)) {
+            const existingIdx = igPostToIndex.get(igKey);
+            const existing = nextMedia[existingIdx];
+
+            const existingIsDirectVideo = existing.type === 'video' && isDirectPlayableVideo(existing.url);
+            const newIsDirectVideo = x.type === 'video' && isDirectPlayableVideo(x.url);
+
+            // 1. Existing was non-working video (e.g. post page or blob) and incoming is direct playable video -> Upgrade in place!
+            if (newIsDirectVideo && !existingIsDirectVideo) {
+              const upgraded = { ...existing };
+              upgraded.type = 'video';
+              upgraded.url = x.url;
+              upgraded.source = x.source || x.url;
+              upgraded.poster = x.poster || existing.poster || existing.previewUrl || existing.url || '';
+              upgraded.previewUrl = x.previewUrl || upgraded.poster || existing.previewUrl || '';
+              upgraded.playbackPage = '';
+              upgraded.unavailable = false;
+              upgraded.fallbackUrls = [...new Set([...(x.fallbackUrls || []), ...(existing.fallbackUrls || [])])];
+              upgraded.width = Math.max(existing.width || 0, Number(x.width) || 0);
+              upgraded.height = Math.max(existing.height || 0, Number(x.height) || 0);
+              upgraded.duration = x.duration || existing.duration || 0;
+              upgraded.id = id;
+              copyRichMeta(upgraded, x);
+              nextMedia[existingIdx] = upgraded;
+              idToIndex.set(id, existingIdx);
+              changed = true;
+              continue;
+            }
+
+            // 2. Incoming is video, existing was image -> Upgrade to video
+            if (x.type === 'video' && existing.type !== 'video') {
+              const upgraded = { ...existing };
+              upgraded.type = 'video';
+              upgraded.url = x.url;
+              upgraded.source = x.source || x.url;
+              upgraded.poster = x.poster || existing.url || existing.previewUrl || '';
+              upgraded.previewUrl = x.previewUrl || upgraded.poster || existing.previewUrl || '';
+              upgraded.playbackPage = x.playbackPage || '';
+              upgraded.unavailable = false;
+              upgraded.fallbackUrls = x.fallbackUrls || [];
+              upgraded.width = Math.max(existing.width || 0, Number(x.width) || 0);
+              upgraded.height = Math.max(existing.height || 0, Number(x.height) || 0);
+              upgraded.duration = x.duration || existing.duration || 0;
+              upgraded.id = id;
+              copyRichMeta(upgraded, x);
+              nextMedia[existingIdx] = upgraded;
+              idToIndex.set(id, existingIdx);
+              changed = true;
+              continue;
+            }
+
+            // 3. Existing is video, incoming is image (e.g. thumbnail arrives later) -> Copy poster/preview, do not downgrade
+            if (existing.type === 'video' && x.type === 'image') {
+              let updated = false;
+              if (!existing.poster && (x.url || x.previewUrl)) {
+                existing.poster = x.url || x.previewUrl;
+                if (!existing.previewUrl) existing.previewUrl = existing.poster;
+                updated = true;
+              }
+              if (!existing.width && x.width) { existing.width = Number(x.width); updated = true; }
+              if (!existing.height && x.height) { existing.height = Number(x.height); updated = true; }
+              copyRichMeta(existing, x);
+              if (updated) changed = true;
+              continue;
+            }
+
+            // 4. Both are direct videos -> Choose higher resolution if available
+            if (newIsDirectVideo && existingIsDirectVideo) {
+              if (Number(x.width) * Number(x.height) > (existing.width || 0) * (existing.height || 0)) {
+                const upgraded = { ...existing };
+                upgraded.url = x.url;
+                upgraded.source = x.source || upgraded.source;
+                upgraded.width = Number(x.width);
+                upgraded.height = Number(x.height);
+                upgraded.duration = x.duration || existing.duration || 0;
+                if (x.poster && !upgraded.poster) upgraded.poster = x.poster;
+                if (x.fallbackUrls?.length) {
+                  upgraded.fallbackUrls = [...new Set([...(upgraded.fallbackUrls || []), ...x.fallbackUrls])];
+                }
+                copyRichMeta(upgraded, x);
+                nextMedia[existingIdx] = upgraded;
+                changed = true;
+              } else {
+                if (x.poster && (!existing.poster || existing.poster === existing.url || existing.poster === existing.postUrl)) {
+                  existing.poster = x.poster;
+                  if (!existing.previewUrl || existing.previewUrl === existing.url || existing.previewUrl === existing.postUrl) {
+                    existing.previewUrl = x.poster;
+                  }
+                  changed = true;
+                }
+                copyRichMeta(existing, x);
+              }
+              continue;
+            }
+
+            // 5. Both are images -> Upgrade if higher resolution
+            if (x.type === 'image' && existing.type === 'image') {
+              if (Number(x.width) * Number(x.height) > (existing.width || 0) * (existing.height || 0)) {
+                const upgraded = { ...existing };
+                upgraded.url = x.url;
+                upgraded.previewUrl = x.previewUrl || upgraded.previewUrl;
+                upgraded.source = x.source || upgraded.source;
+                upgraded.width = Number(x.width);
+                upgraded.height = Number(x.height);
+                copyRichMeta(upgraded, x);
+                nextMedia[existingIdx] = upgraded;
+                changed = true;
+              } else {
+                copyRichMeta(existing, x);
+              }
+              continue;
+            }
+
+            // Any other match with the same igKey -> Merge metadata and skip duplicate
+            if (x.poster && (!existing.poster || existing.poster === existing.url || existing.poster === existing.postUrl || (x.poster.length > 500 && (existing.poster || '').length < 100))) {
+              existing.poster = x.poster;
+              if (!existing.previewUrl || existing.previewUrl === existing.url || existing.previewUrl === existing.postUrl) {
+                existing.previewUrl = x.poster;
+              }
+              changed = true;
+            }
+            copyRichMeta(existing, x);
+            continue;
+          }
+        }
+
         if (idToIndex.has(id)) {
           const idx = idToIndex.get(id);
           const updated = { ...nextMedia[idx] };
@@ -299,6 +448,9 @@ export function usePageScanner({
             const pId = item.postId ? String(item.postId).replace(/^t3_/, '').toLowerCase() : getRedditPostId(item.postUrl || item.url);
             if (pId) redditPostToIndex.set(pId, newIdx);
           }
+        } else if (item.site === 'instagram') {
+          const igKey = getIgPostKey(item);
+          if (igKey) igPostToIndex.set(igKey, newIdx);
         }
         addedCount++;
         changed = true;
@@ -346,6 +498,7 @@ export function usePageScanner({
         const hasX = items.some(x => x.site === 'x');
         const hasReddit = items.some(x => x.site === 'reddit');
         const hasTumblr = items.some(x => x.site === 'tumblr');
+        const hasIg = items.some(x => x.site === 'instagram');
         if (hasYt) {
           setSiteProfile({ key: 'youtube', name: 'YouTube', glyph: '▶', hint: 'Watch videos · shorts · embedded players' });
         } else if (hasX) {
@@ -354,7 +507,23 @@ export function usePageScanner({
           setSiteProfile({ key: 'reddit', name: 'Reddit', glyph: 'r', hint: 'Post images · hosted videos · discussions' });
         } else if (hasTumblr) {
           setSiteProfile({ key: 'tumblr', name: 'Tumblr', glyph: 't', hint: 'Photosets · GIFs · original sizes · posts' });
+        } else if (hasIg) {
+          setSiteProfile({ key: 'instagram', name: 'Instagram', glyph: '◎', hint: 'Loaded posts · high-res photos · reels' });
         }
+      }
+
+      if (items.some(x => x.site === 'instagram') && isExtensionValid()) {
+        try {
+          const [mainRes] = await chrome.scripting.executeScript({
+            target: { tabId },
+            world: 'MAIN',
+            func: extractInstagramMainWorldMedia
+          });
+          const mainItems = mainRes?.result || [];
+          if (mainItems.length) {
+            mergeMedia(mainItems);
+          }
+        } catch {}
       }
     } catch {} finally {
       liveScanBusyRef.current = false;
@@ -527,6 +696,20 @@ export function usePageScanner({
       }
       mergeMedia(scannedItems);
       if (result?.site) setSiteProfile(result.site);
+
+      if ((result?.site?.key === 'instagram' || scannedItems.some(x => x.site === 'instagram')) && isExtensionValid()) {
+        try {
+          const [mainRes] = await chrome.scripting.executeScript({
+            target: { tabId },
+            world: 'MAIN',
+            func: extractInstagramMainWorldMedia
+          });
+          const mainItems = mainRes?.result || [];
+          if (mainItems.length) {
+            mergeMedia(mainItems);
+          }
+        } catch {}
+      }
 
       setScanStatus(`${scannedItems.length} items · live`);
       setLoading(false);

@@ -131,10 +131,12 @@ export function useGalleryFilters({ media, savedMedia, savedFiles, prefs, onFilt
     else if (siteFilter === 'youtube') list = list.filter(x => x.site === 'youtube');
     else if (siteFilter === 'tumblr') list = list.filter(x => x.site === 'tumblr');
     else if (siteFilter === 'tumblr-photosets') list = list.filter(x => x.site === 'tumblr' && (x.isGallery || x.galleryTotal > 1));
+    else if (siteFilter === 'instagram') list = list.filter(x => x.site === 'instagram');
+    else if (siteFilter === 'instagram-carousels') list = list.filter(x => x.site === 'instagram' && (x.isGallery || x.galleryTotal > 1));
 
     if (term) {
       list = list.filter(x =>
-        `${x.alt} ${x.url} ${x.pageTitle} ${x.fileName || ''} ${x.site || ''} ${x.blogName || ''} ${(x.tags || []).join(' ')} ${isItemGif(x) ? 'gif' : ''}`
+        `${x.alt} ${x.url} ${x.pageTitle} ${x.fileName || ''} ${x.site || ''} ${x.author || ''} ${x.caption || ''} ${x.blogName || ''} ${(x.tags || []).join(' ')} ${(x.hashtags || []).join(' ')} ${(x.mentions || []).join(' ')} ${isItemGif(x) ? 'gif' : ''}`
           .toLowerCase()
           .includes(term)
       );

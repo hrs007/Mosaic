@@ -21,6 +21,7 @@ function MediaCard({
   observer,
   isFavorited = false,
   isDownloaded = false,
+  isViewerOpen = false,
   prefs = {},
   onToggleFavorite,
   onDownloadItem,
@@ -66,11 +67,23 @@ function MediaCard({
   const ratio = item.width && item.height ? item.width / item.height : 0;
   const ratioClass = ratio > 1.12 ? 'landscape' : ratio < 0.88 && ratio > 0 ? 'portrait' : ratio > 0 ? 'square' : '';
 
+  const isLikelyImageUrl = (u) => {
+    if (!u || typeof u !== 'string') return false;
+    if (/^data:image\//i.test(u)) return true;
+    if (/\.(jpe?g|png|webp|avif|heic)(?:[?#]|$)/i.test(u)) return true;
+    if (/(?:cdninstagram\.com|fbcdn\.net)\/.*(?:[?&]stp=dst-jpg|\/t51\.|\.jpg|\.webp)/i.test(u)) return true;
+    if (/(?:cdninstagram\.com|fbcdn\.net)/i.test(u) && !/\.(mp4|webm|mov)(?:[?#]|$)/i.test(u) && !/[?&]format=mp4/i.test(u)) return true;
+    return false;
+  };
+
   const isGif = isItemGif(item);
   const playableUrl = item.savedFile ? (resolvedSrc || getPlayableVideoUrl(item)) : getPlayableVideoUrl(item);
   const isVideo = item.type === 'video' || Boolean(playableUrl);
   const gifAnimatedUrl = isGif ? getGifAnimatedUrl(item) : '';
-  const poster = item.poster || item.previewUrl || item.thumbnail || item.previewImage;
+  const poster = item.poster || item.previewUrl || item.thumbnail || item.previewImage ||
+    (isLikelyImageUrl(item.url) ? item.url : '') ||
+    (isLikelyImageUrl(item.source) ? item.source : '') ||
+    (Array.isArray(item.fallbackUrls) ? item.fallbackUrls.find(u => isLikelyImageUrl(u)) : '') || '';
 
   // Track video poster and playable URL with fallbacks
   const [posterSrc, setPosterSrc] = useState(poster || '');
@@ -82,11 +95,15 @@ function MediaCard({
   const [videoFallbackIndex, setVideoFallbackIndex] = useState(-1);
 
   useEffect(() => {
-    setPosterSrc(item.poster || item.previewUrl || item.thumbnail || item.previewImage || '');
+    const candidate = item.poster || item.previewUrl || item.thumbnail || item.previewImage ||
+      (isLikelyImageUrl(item.url) ? item.url : '') ||
+      (isLikelyImageUrl(item.source) ? item.source : '') ||
+      (Array.isArray(item.fallbackUrls) ? item.fallbackUrls.find(u => isLikelyImageUrl(u)) : '') || '';
+    setPosterSrc(candidate);
     setPosterBroken(false);
     setPosterFallbackIndex(-1);
     setPosterRetryCount(0);
-  }, [item.poster, item.previewUrl, item.thumbnail, item.previewImage]);
+  }, [item.poster, item.previewUrl, item.thumbnail, item.previewImage, item.url, item.source, item.fallbackUrls]);
 
   useEffect(() => {
     setCurrentVideoUrl(playableUrl || '');
@@ -196,8 +213,9 @@ function MediaCard({
       item.previewUrl,
       item.thumbnail,
       item.previewImage,
-      item.source,
-      ...(item.fallbackUrls || []).filter(u => !/\.(mp4|webm|mov|m4v)(?:[?#]|$)/i.test(u))
+      (isLikelyImageUrl(item.url) ? item.url : ''),
+      (isLikelyImageUrl(item.source) ? item.source : ''),
+      ...(item.fallbackUrls || []).filter(u => isLikelyImageUrl(u))
     ].filter(u => u && typeof u === 'string' && !isDisallowedMediaUrl(u) && !isProfileOrAvatarUrl(u));
     const unique = [...new Set(posterCandidates)];
 
@@ -295,34 +313,19 @@ function MediaCard({
     }, 8000);
   };
 
-  // Resolve duration for direct playable videos if not provided by scanner
+  // When viewer opens, pause and unload background videos to release bandwidth and decoders
   useEffect(() => {
-    if (item.type !== 'video' || videoDuration || item.duration) return;
-    if (playableUrl && !item.isEmbed && !playableUrl.includes('youtube') && !playableUrl.includes('#mosaic-video-')) {
-      const v = document.createElement('video');
-      v.preload = 'metadata';
-      v.muted = true;
-      v.src = playableUrl;
-      const onLoaded = () => {
-        if (v.duration && Number.isFinite(v.duration) && v.duration > 0) {
-          const d = Math.round(v.duration);
-          setVideoDuration(d);
-          item.duration = d;
-        }
-        cleanup();
-      };
-      const onError = () => cleanup();
-      const cleanup = () => {
-        v.removeEventListener('loadedmetadata', onLoaded);
-        v.removeEventListener('error', onError);
-        v.removeAttribute('src');
-        v.load();
-      };
-      v.addEventListener('loadedmetadata', onLoaded, { once: true });
-      v.addEventListener('error', onError, { once: true });
-      return cleanup;
+    if (isViewerOpen && videoRef.current && !isGif) {
+      videoRef.current.pause();
+      setIsVideoPlaying(false);
+      if (prefs.autoplayMode !== 'grid') {
+        videoRef.current.removeAttribute('src');
+        videoRef.current.load();
+      }
     }
-  }, [item.type, item.isEmbed, playableUrl, videoDuration, item.duration]);
+  }, [isViewerOpen, isGif, prefs.autoplayMode]);
+
+  const shouldAttachVideo = isGif || (prefs.autoplayMode === 'grid' && !isViewerOpen) || isHovered;
 
   // File extension badge for saved library cards
   const ext = item.savedFile
@@ -359,8 +362,12 @@ function MediaCard({
         style={item.width && item.height ? { '--ratio': `${item.width}/${item.height}` } : undefined}
         onClick={() => onOpenViewer?.(index)}
         onMouseEnter={() => {
+          if (isViewerOpen) return;
           setIsHovered(true);
-          if (isVideo && videoRef.current && playableUrl) {
+          if (isVideo && videoRef.current && currentVideoUrl) {
+            if (!videoRef.current.src || videoRef.current.src !== currentVideoUrl) {
+              videoRef.current.src = currentVideoUrl;
+            }
             videoRef.current.muted = true;
             videoRef.current.defaultMuted = true;
             const playPromise = videoRef.current.play();
@@ -377,6 +384,8 @@ function MediaCard({
               videoRef.current.currentTime = 0;
             } catch {}
             setIsVideoPlaying(false);
+            videoRef.current.removeAttribute('src');
+            videoRef.current.load();
           }
         }}
       >
@@ -393,6 +402,13 @@ function MediaCard({
 
         {isGif && (
           <span className="gif-badge">GIF</span>
+        )}
+
+        {/* Gallery / Carousel Indicator Badge */}
+        {(item.isGallery || (item.galleryTotal && item.galleryTotal > 1)) && (
+          <span className="gallery-total-badge" title={`Carousel slide ${(item.galleryIndex != null ? item.galleryIndex + 1 : 1)} of ${item.galleryTotal || '?'}`}>
+            ❐ {item.galleryTotal ? `${(item.galleryIndex != null ? item.galleryIndex + 1 : 1)}/${item.galleryTotal}` : 'Carousel'}
+          </span>
         )}
 
         {/* Video Duration Badge (hidden for looping GIFs) */}
@@ -435,14 +451,15 @@ function MediaCard({
                 ref={videoRef}
                 key={`vid-${retryNonce}-${currentVideoUrl}`}
                 className={`card-video-player ${isVideoPlaying || isGif ? 'is-playing' : ''} ${isGif ? 'is-gif' : ''}`}
-                src={currentVideoUrl}
+                src={shouldAttachVideo ? currentVideoUrl : undefined}
+                poster={posterSrc || undefined}
                 referrerPolicy="no-referrer"
                 muted
                 defaultMuted
                 playsInline
                 loop
                 autoPlay={isGif}
-                preload={isGif ? 'auto' : 'metadata'}
+                preload={isGif ? 'auto' : (prefs.autoplayMode === 'grid' ? 'metadata' : (isHovered ? 'auto' : 'none'))}
                 data-is-gif={isGif ? 'true' : 'false'}
                 onError={handleVideoError}
                 onPlaying={() => {

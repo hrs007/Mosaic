@@ -165,6 +165,27 @@ export function GalleryProvider({ children }) {
     } catch {}
   }, [tabId, prefs.exitScroll]);
 
+  // Navigate Instagram tab to hashtag or profile and auto-open Mosaic in extension view
+  const navigateToInstagram = useCallback((targetUrl, options = {}) => {
+    if (!targetUrl) return;
+    const keepGalleryOpen = options.keepGalleryOpen !== false;
+
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime?.id && chrome.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({
+          type: 'mosaic-navigate-to-instagram',
+          url: targetUrl,
+          tabId,
+          keepGalleryOpen
+        });
+        showToast('Navigating Instagram in extension view…');
+        return;
+      }
+    } catch {}
+
+    window.open(targetUrl, '_blank', 'noopener');
+  }, [tabId, showToast]);
+
   // Hook 5: Keyboard Shortcuts
   useKeyboardShortcuts({
     viewerIndex: viewerState.viewerIndex,
@@ -228,6 +249,7 @@ export function GalleryProvider({ children }) {
     clearFavorites: downloadsState.clearFavorites,
     clearLibrary: downloadsState.clearLibrary,
     closeGallery,
+    navigateToInstagram,
     isAdvancing: scannerState.isAdvancing,
     hasReachedEnd: scannerState.hasReachedEnd
   }), [
@@ -244,7 +266,7 @@ export function GalleryProvider({ children }) {
     scannerState.scanStatus, scannerState.loading, scannerState.scanPage, scannerState.scanLiveNow,
     scannerState.advanceSourcePage, scannerState.checkGalleryFill, scannerState.onGalleryScroll,
     downloadsState.toggleFavorite, downloadsState.downloadItem, downloadsState.removeSavedFile,
-    downloadsState.clearFavorites, downloadsState.clearLibrary, closeGallery,
+    downloadsState.clearFavorites, downloadsState.clearLibrary, closeGallery, navigateToInstagram,
     scannerState.isAdvancing, scannerState.hasReachedEnd
   ]);
 

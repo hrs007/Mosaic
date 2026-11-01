@@ -1,5 +1,11 @@
 import React from 'react';
-import { filename, formatSize } from '../../utils/mediaHelpers.js';
+import {
+  filename,
+  formatSize,
+  getInstagramProfileUrl,
+  getInstagramHashtagUrl,
+  extractHashtags
+} from '../../utils/mediaHelpers.js';
 import {
   FitIcon,
   StarIcon,
@@ -33,12 +39,14 @@ export default function ViewerInfoBar({
   currentVideoUrl,
   gallerySiblings = [],
   currentGalleryPos = -1,
-  onNavigateGallery
+  onNavigateGallery,
+  onNavigateToInstagram
 }) {
   const isVideo = item.type === 'video' || Boolean(currentVideoUrl);
   const isReddit = item.site === 'reddit';
   const isX = item.site === 'x';
   const isTumblr = item.site === 'tumblr';
+  const isInstagram = item.site === 'instagram';
 
   const subreddit = item.subreddit || '';
   const redditAuthor = item.author || '';
@@ -49,6 +57,14 @@ export default function ViewerInfoBar({
   const blogName = item.blogName || '';
   const rebloggedFrom = item.rebloggedFrom || '';
   const tags = Array.isArray(item.tags) ? item.tags : [];
+
+  const altAuthor = item.alt ? ((item.alt.match(/(?:Photo|Video)\s+by\s+([^.]+?)\s+on/i)?.[1]) || (item.alt.match(/by\s+@?([a-zA-Z0-9_\.]+)/i)?.[1]) || '') : '';
+  const igAuthor = item.author || altAuthor;
+  const igLikes = item.likes != null ? item.likes : (item.likeCount != null ? item.likeCount : '');
+  const hasIgLikes = (typeof igLikes === 'number' && igLikes > 0) || (typeof igLikes === 'string' && igLikes && !/^(?:0|0\s*likes?)$/i.test(igLikes.trim()));
+  const igComments = item.commentCount != null ? item.commentCount : (item.comments != null ? item.comments : '');
+  const hasIgComments = (typeof igComments === 'number' && igComments > 0) || (typeof igComments === 'string' && igComments && !/^(?:0|0\s*comments?)$/i.test(igComments.trim()));
+  const igHashtags = Array.isArray(item.hashtags) && item.hashtags.length ? item.hashtags : extractHashtags(item.caption || item.alt || '');
 
   // Get active variant label if available
   const activeVariant = videoVariants.find(v => v.url === currentVideoUrl) || videoVariants[0];
@@ -140,14 +156,50 @@ export default function ViewerInfoBar({
           </div>
         )}
 
+        {/* Instagram Author & Stats Pill */}
+        {isInstagram && (
+          <div className="viewer-platform-pill-group">
+            {igAuthor && (
+              <button
+                className="viewer-badge-pill instagram-pill"
+                onClick={() => onNavigateToInstagram ? onNavigateToInstagram(getInstagramProfileUrl(igAuthor)) : window.open(getInstagramProfileUrl(igAuthor), '_blank', 'noopener')}
+                title={`Open @${igAuthor} in extension view`}
+              >
+                <span className="ig-glyph">◎</span>
+                <span>@{igAuthor} ↗</span>
+              </button>
+            )}
+            {hasIgLikes && (
+              <span className="viewer-badge-pill score-pill" title="Likes">
+                ♥ {typeof igLikes === 'number' ? Number(igLikes).toLocaleString() : igLikes}
+              </span>
+            )}
+            {hasIgComments && (
+              <span className="viewer-badge-pill comment-pill" title="Comments">
+                💬 {typeof igComments === 'number' ? Number(igComments).toLocaleString() : igComments}
+              </span>
+            )}
+            {igHashtags.slice(0, 3).map(tag => (
+              <button
+                key={tag}
+                className="viewer-badge-pill instagram-tag-pill"
+                onClick={() => onNavigateToInstagram ? onNavigateToInstagram(getInstagramHashtagUrl(tag)) : window.open(getInstagramHashtagUrl(tag), '_blank', 'noopener')}
+                title={`Explore #${tag} on Instagram in extension view`}
+              >
+                #{tag} ↗
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Multi-image Gallery / Photoset Stepper */}
         {gallerySiblings.length > 1 && currentGalleryPos !== -1 && (
-          <div className="viewer-gallery-stepper" title={isTumblr ? "Tumblr Photoset Slide" : "Reddit Gallery Slide"}>
+          <div className="viewer-gallery-stepper" title={isTumblr ? "Tumblr Photoset Slide" : isInstagram ? "Instagram Carousel Slide" : "Reddit Gallery Slide"}>
             <button
               className="stepper-arrow"
               disabled={currentGalleryPos <= 0}
               onClick={() => onNavigateGallery(-1)}
-              title={isTumblr ? "Previous slide in this photoset" : "Previous slide in this Reddit post"}
+              title={isTumblr ? "Previous slide in this photoset" : isInstagram ? "Previous slide in this Instagram carousel" : "Previous slide in this Reddit post"}
             >
               ‹
             </button>
@@ -158,7 +210,7 @@ export default function ViewerInfoBar({
               className="stepper-arrow"
               disabled={currentGalleryPos >= gallerySiblings.length - 1}
               onClick={() => onNavigateGallery(1)}
-              title={isTumblr ? "Next slide in this photoset" : "Next slide in this Reddit post"}
+              title={isTumblr ? "Next slide in this photoset" : isInstagram ? "Next slide in this Instagram carousel" : "Next slide in this Reddit post"}
             >
               ›
             </button>
@@ -189,11 +241,11 @@ export default function ViewerInfoBar({
         ) : isPostDifferent ? (
           <button
             className="viewer-ctrl-btn viewer-ctrl-pill primary-site-btn"
-            onClick={() => window.open(postOrPage, '_blank', 'noopener')}
-            title={isReddit ? 'Open Reddit thread' : isX ? 'Open X post' : isTumblr ? 'Open Tumblr post' : 'Open source page'}
+            onClick={() => isInstagram && onNavigateToInstagram ? onNavigateToInstagram(postOrPage) : window.open(postOrPage, '_blank', 'noopener')}
+            title={isReddit ? 'Open Reddit thread' : isX ? 'Open X post' : isTumblr ? 'Open Tumblr post' : isInstagram ? 'Open Instagram post in extension view' : 'Open source page'}
           >
             <ExternalLinkIcon size={13} />
-            <span>{isReddit ? 'Reddit Thread' : isX ? 'Open on 𝕏' : isTumblr ? 'Open on Tumblr' : 'Source Page'} ↗</span>
+            <span>{isReddit ? 'Reddit Thread' : isX ? 'Open on 𝕏' : isTumblr ? 'Open on Tumblr' : isInstagram ? 'Instagram Post' : 'Source Page'} ↗</span>
           </button>
         ) : null}
 

@@ -36,7 +36,8 @@ export default function MediaViewer() {
     savedFiles,
     downloadItem,
     removeSavedFile,
-    showToast
+    showToast,
+    navigateToInstagram
   } = useGallery();
 
   const item = filtered[viewerIndex];
@@ -75,8 +76,21 @@ export default function MediaViewer() {
     (item?.playbackPage && /redgifs\.com\/ifr\/|streamable\.com\/e\/|giphy\.com\/embed\/|youtube\.com\/embed\/|youtu\.be/i.test(item.playbackPage))
   );
   const isXFallback = item?.site === 'x' && item?.type === 'video' && item?.playbackPage && !playableUrl;
+  const isInstagramFallback = item?.site === 'instagram' && item?.type === 'video' && !playableUrl;
   const isDownloaded = item ? isItemDownloaded(item, savedFiles) : false;
   const gifAnimatedUrl = isGif ? getGifAnimatedUrl(item) : '';
+
+  const isLikelyImageUrl = (u) => {
+    if (!u || typeof u !== 'string') return false;
+    if (/^data:image\//i.test(u)) return true;
+    if (/\.(jpe?g|png|webp|avif|heic)(?:[?#]|$)/i.test(u)) return true;
+    if (/(?:cdninstagram\.com|fbcdn\.net)\/.*(?:[?&]stp=dst-jpg|\/t51\.|\.jpg|\.webp)/i.test(u)) return true;
+    if (/(?:cdninstagram\.com|fbcdn\.net)/i.test(u) && !/\.(mp4|webm|mov)(?:[?#]|$)/i.test(u) && !/[?&]format=mp4/i.test(u)) return true;
+    return false;
+  };
+  const viewerPoster = item?.poster || item?.previewUrl || item?.thumbnail || item?.previewImage ||
+    (isLikelyImageUrl(item?.url) ? item.url : '') ||
+    (isLikelyImageUrl(item?.source) ? item.source : '') || '';
 
   // Video resolution variants
   const videoVariants = useMemo(() => {
@@ -129,6 +143,18 @@ export default function MediaViewer() {
       return filtered
         .map((m, idx) => ({ item: m, index: idx }))
         .filter(x => x.item.site === 'tumblr' && String(x.item.postId || '').toLowerCase() === pId);
+    }
+    if (item.site === 'instagram') {
+      const pId = item.postId ? String(item.postId).toLowerCase() : '';
+      if (!pId) return [];
+      const siblings = filtered
+        .map((m, idx) => ({ item: m, index: idx }))
+        .filter(x => x.item.site === 'instagram' && String(x.item.postId || '').toLowerCase() === pId);
+      return siblings.sort((a, b) => {
+        const idxA = typeof a.item.galleryIndex === 'number' ? a.item.galleryIndex : 0;
+        const idxB = typeof b.item.galleryIndex === 'number' ? b.item.galleryIndex : 0;
+        return idxA - idxB;
+      });
     }
     return [];
   }, [item?.postId, item?.site, filtered]);
@@ -314,7 +340,7 @@ export default function MediaViewer() {
 
   // Autoplay video on load
   useEffect(() => {
-    if (isVideo && videoRef.current && !isEmbed && !isXFallback) {
+    if (isVideo && videoRef.current && !isEmbed && !isXFallback && !isInstagramFallback) {
       if (isGif || prefs.autoplayViewer) {
         if (isGif) {
           videoRef.current.muted = true;
@@ -325,7 +351,7 @@ export default function MediaViewer() {
         videoRef.current.pause();
       }
     }
-  }, [item, isVideo, isGif, isEmbed, isXFallback, prefs.autoplayViewer]);
+  }, [item, isVideo, isGif, isEmbed, isXFallback, isInstagramFallback, prefs.autoplayViewer]);
 
   const handlePlayToggle = () => {
     if (!videoRef.current) return;
@@ -548,6 +574,23 @@ export default function MediaViewer() {
                 Play on X
               </button>
             </div>
+          ) : isInstagramFallback ? (
+            <div className="instagram-video-fallback">
+              {viewerPoster && (
+                <img
+                  src={getBustedUrl(viewerPoster)}
+                  alt={item.alt || 'Instagram reel preview'}
+                  referrerPolicy="no-referrer"
+                />
+              )}
+              <p>Streamed by Instagram with MSE media blobs.</p>
+              <button
+                className="site-action"
+                onClick={() => navigateToInstagram ? navigateToInstagram(item.postUrl || item.pageUrl) : window.open(item.postUrl || item.pageUrl, '_blank', 'noopener')}
+              >
+                Watch Reel on Instagram in Extension View ↗
+              </button>
+            </div>
           ) : isVideo ? (
             <>
               <div
@@ -568,6 +611,7 @@ export default function MediaViewer() {
                   muted={isGif ? true : isMuted}
                   defaultMuted={isGif ? true : isMuted}
                   preload="auto"
+                  poster={viewerPoster}
                   referrerPolicy="no-referrer"
                   style={{
                     objectFit: isFill ? 'cover' : 'contain',
@@ -687,6 +731,7 @@ export default function MediaViewer() {
           gallerySiblings={gallerySiblings}
           currentGalleryPos={currentGalleryPos}
           onNavigateGallery={handleNavigateGallery}
+          onNavigateToInstagram={navigateToInstagram}
         />
       </div>
 
@@ -712,6 +757,7 @@ export default function MediaViewer() {
         isPostDifferent={isPostDifferent}
         playbackRate={playbackRate}
         onSelectPlaybackRate={handleSelectPlaybackRate}
+        onNavigateToInstagram={navigateToInstagram}
         isLooping={isLooping}
         onToggleLoop={handleLoopToggle}
         autoplayViewer={prefs.autoplayViewer}

@@ -2,6 +2,7 @@ export function isDisallowedMediaUrl(url) {
   if (!url || typeof url !== 'string') return true;
   const s = url.trim();
   if (!s || /^javascript:/i.test(s) || /^data:(?:text|application)\//i.test(s) || /^data:image\/svg\+xml/i.test(s)) return true;
+  if (/static\.cdninstagram\.com\/rsrc\.php\//i.test(s)) return true;
 
   try {
     const parsed = new URL(s, 'https://mosaic.internal');
@@ -30,7 +31,62 @@ export function isProfileOrAvatarUrl(url) {
   return /twimg\.com\/(?:profile_images|profile_banners|sticky\/default_profile_images)\//i.test(url) ||
          /(?:styles\.redditmedia\.com\/.*avatar|reddit\.com\/avatar)/i.test(url) ||
          /(?:avatars\.githubusercontent\.com|yt3\.ggpht\.com)/i.test(url) ||
-         /(?:media\.tumblr\.com\/avatar_|assets\.tumblr\.com\/images\/default_avatar|api\.tumblr\.com\/v2\/blog\/.*\/avatar|s\d+x\d+u_c1\/)/i.test(url);
+         /(?:media\.tumblr\.com\/avatar_|assets\.tumblr\.com\/images\/default_avatar|api\.tumblr\.com\/v2\/blog\/.*\/avatar|s\d+x\d+u_c1\/)/i.test(url) ||
+         /static\.cdninstagram\.com\/rsrc\.php\//i.test(url);
+}
+
+export function getInstagramShortcode(url) {
+  if (!url) return '';
+  const m = String(url).match(/(?:instagram\.com\/(?:p|reel|reels)\/|\/p\/|\/reel\/|\/reels\/)([a-zA-Z0-9_-]+)/i);
+  return m ? m[1] : '';
+}
+
+export function extractHashtags(text) {
+  if (!text || typeof text !== 'string') return [];
+  const matches = text.match(/#([a-zA-Z0-9_\u0080-\uffff]+)/g);
+  if (!matches) return [];
+  return [...new Set(matches.map(m => m.slice(1).toLowerCase()))];
+}
+
+export function extractMentions(text) {
+  if (!text || typeof text !== 'string') return [];
+  const matches = text.match(/@([a-zA-Z0-9_\.]+)/g);
+  if (!matches) return [];
+  return [...new Set(matches.map(m => m.slice(1)))];
+}
+
+export function getInstagramProfileUrl(username) {
+  if (!username) return 'https://www.instagram.com/';
+  const clean = String(username).replace(/^[@\/]+|[\/]+$/g, '');
+  return `https://www.instagram.com/${encodeURIComponent(clean)}/`;
+}
+
+export function getInstagramProfileFromPath(pathname = '') {
+  try {
+    const path = (pathname || (typeof location !== 'undefined' ? location.pathname : '')).replace(/^\/+|\/+$/g, '');
+    const parts = path.split('/');
+    const first = parts[0] || '';
+    const reserved = new Set(['', 'p', 'reel', 'reels', 'stories', 'explore', 'direct', 'accounts', 'developer', 'about', 'legal', 'terms', 'privacy', 'directory', 'tag', 'tags', 'archive']);
+    if (first && !reserved.has(first.toLowerCase()) && /^[a-zA-Z0-9_\.]+$/.test(first)) {
+      return first;
+    }
+  } catch {}
+  return '';
+}
+
+export function getInstagramTagFromPath(pathname = '') {
+  try {
+    const path = pathname || (typeof location !== 'undefined' ? location.pathname : '');
+    const m = path.match(/\/explore\/tags\/([^\/?#]+)/i) || path.match(/\/tags\/([^\/?#]+)/i);
+    return m ? decodeURIComponent(m[1]) : '';
+  } catch {}
+  return '';
+}
+
+export function getInstagramHashtagUrl(tag) {
+  if (!tag) return 'https://www.instagram.com/';
+  const clean = String(tag).replace(/^[#\/]+|[\/]+$/g, '');
+  return `https://www.instagram.com/explore/tags/${encodeURIComponent(clean)}/`;
 }
 
 export function getRedditPostId(url) {
@@ -314,6 +370,27 @@ export function canonicalMediaId(url, item = null) {
       if (pId) return `reddit:post-video:${pId}`;
     }
 
+    if (item && item.site === 'instagram') {
+      const pId = item.postId || getInstagramShortcode(item.postUrl || item.playbackPage || item.pageUrl || raw);
+      if (pId && item.galleryIndex != null) {
+        return `instagram:post:${pId}:${item.galleryIndex}`;
+      }
+      if (pId) {
+        return `instagram:post:${pId}`;
+      }
+    }
+
+    const igCode = getInstagramShortcode(raw);
+    if (igCode) {
+      return `instagram:post:${igCode}`;
+    }
+
+    if (raw.includes('cdninstagram.com')) {
+      const match = raw.match(/\/([a-zA-Z0-9_-]+_[an])\.(?:jpe?g|png|webp|mp4)/i) ||
+                    raw.match(/\/([0-9]+_[0-9]+_[0-9]+_[an])\./i);
+      if (match) return `instagram:media:${match[1]}`;
+    }
+
     const u = new URL(raw);
     if (u.hostname === 'preview.redd.it' || u.hostname === 'external-preview.redd.it') {
       const rId = getRedditImageId(raw);
@@ -333,11 +410,14 @@ export function canonicalMediaId(url, item = null) {
 
 export function isDirectPlayableVideo(url) {
   if (!url || typeof url !== 'string' || isDisallowedMediaUrl(url)) return false;
+  // Cross-origin blobs (e.g. blob:https://www.instagram.com/...) cannot be played across origins in extension
+  if (/^blob:https?:/i.test(url)) return false;
   if (/^blob:/i.test(url) || /^data:video\//i.test(url)) return true;
   if (url.includes('youtube.com') || url.includes('youtube-nocookie.com') || url.includes('youtu.be') || url.includes('#mosaic-video-')) return false;
   if (/redgifs\.com\/(?:ifr|watch)/i.test(url) || /streamable\.com\/(?:e\/|[a-zA-Z0-9]+$)/i.test(url)) return false;
   return /\.(mp4|webm|mov|m4v|ogv)(?:[?#]|$)/i.test(url) ||
          /[?&]format=mp4(?:&|$)/i.test(url) ||
+         /(?:cdninstagram\.com|fbcdn\.net)\/.*(?:\.mp4|\/o1\/v\/|\/v\/t(?:50|66)\.)/i.test(url) ||
          /video\.twimg\.com|v\.redd\.it|thumbs2\.redgifs\.com|media\.redgifs\.com|media\.giphy\.com/i.test(url);
 }
 
@@ -354,12 +434,13 @@ export function getPlayableVideoUrl(item) {
     ...(item.fallbackUrls || [])
   ].filter(u => {
     if (!u || typeof u !== 'string' || u.includes('#mosaic-video-')) return false;
+    if (/^blob:https?:/i.test(u)) return false;
     if (/[?&]format=mp4(?:&|$)/i.test(u)) return true;
     return !/\.(jpe?g|png|webp|avif|gif|svg)(?:[?#]|$)/i.test(u);
   });
 
   const direct = candidates.find(u => isDirectPlayableVideo(u));
-  if (direct) return direct;
+  if (direct && !/^blob:https?:/i.test(direct)) return direct;
   return '';
 }
 

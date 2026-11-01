@@ -201,6 +201,17 @@ main {
   border-color: var(--green-dark);
 }
 
+.site-action.tag-action {
+  color: #f43f5e;
+  background: rgba(244, 63, 94, 0.06);
+  border-color: rgba(244, 63, 94, 0.28);
+}
+
+.site-action.tag-action:hover {
+  background: rgba(244, 63, 94, 0.16);
+  border-color: rgba(244, 63, 94, 0.55);
+}
+
 .toolbar-wrap {
   position: sticky;
   top: 58px;
@@ -930,6 +941,28 @@ html[data-theme=amoled] .downloaded-badge {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
   display: inline-flex;
   align-items: center;
+  line-height: 1.2;
+}
+
+.gallery-total-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 4;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.76);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  font: 700 9.5px var(--mono);
+  letter-spacing: .03em;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   line-height: 1.2;
 }
 

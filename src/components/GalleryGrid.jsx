@@ -26,8 +26,11 @@ export default function GalleryGrid() {
     toggleFavorite,
     downloadItem,
     showToast,
-    openViewer
+    openViewer,
+    viewerIndex
   } = useGallery();
+
+  const isViewerOpen = viewerIndex != null && viewerIndex !== -1;
 
   const savedIdsSet = useMemo(() => {
     const s = new Set();
@@ -71,7 +74,7 @@ export default function GalleryGrid() {
         const video = entry.target;
         if (!video) return;
         const isGif = video.dataset.isGif === 'true';
-        if (entry.isIntersecting) {
+        if (entry.isIntersecting && !isViewerOpen) {
           if (prefs.autoplayMode === 'grid' || isGif) {
             video.muted = true;
             video.defaultMuted = true;
@@ -82,7 +85,7 @@ export default function GalleryGrid() {
         }
       });
     }, { rootMargin: '200px 0px', threshold: 0.05 });
-  }, [prefs.autoplayMode]);
+  }, [prefs.autoplayMode, isViewerOpen]);
 
   const visibleItems = useMemo(() => {
     return filtered.slice(0, page * perPage);
@@ -159,6 +162,7 @@ export default function GalleryGrid() {
                 observer={observer}
                 isFavorited={favorites.has(item.id)}
                 isDownloaded={checkIsDownloaded(item)}
+                isViewerOpen={isViewerOpen}
                 prefs={prefs}
                 onToggleFavorite={toggleFavorite}
                 onDownloadItem={downloadItem}
@@ -185,6 +189,7 @@ export default function GalleryGrid() {
           observer={observer}
           isFavorited={favorites.has(item.id)}
           isDownloaded={checkIsDownloaded(item)}
+          isViewerOpen={isViewerOpen}
           prefs={prefs}
           onToggleFavorite={toggleFavorite}
           onDownloadItem={downloadItem}

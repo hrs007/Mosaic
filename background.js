@@ -143,6 +143,20 @@ async function toggleGallery(tab) {
             }
           };
 
+          // Listen for CSP block on host page (e.g. strict host CSP on unrefreshed tabs)
+          const onCspViolation = (e) => {
+            const blocked = String(e?.blockedURI || '');
+            if (blocked.includes('gallery.html') || blocked.startsWith('chrome-extension://')) {
+              cleanup(false);
+              try {
+                chrome.runtime?.sendMessage?.({ type: 'mosaic-open-tab-fallback', tabId });
+              } catch {
+                window.open(url, '_blank', 'noopener');
+              }
+            }
+          };
+          document.addEventListener('securitypolicyviolation', onCspViolation, true);
+
           // Auto-focus the frame so keyboard events are received immediately
           try {
             frame.focus();
@@ -199,6 +213,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     sendResponse?.({ ok: true });
     return false;
+  }
+
+  if (message?.type === 'mosaic-open-tab-fallback' && message.tabId) {
+    chrome.tabs.create({ url: chrome.runtime.getURL(`gallery.html?tabId=${message.tabId}`) });
+  }
+
+  // Navigate Instagram tab to hashtag/profile and re-open Mosaic in extension view
+  if (message?.type === 'mosaic-navigate-to-instagram' && message.url) {
+    const targetTabId = message.tabId;
+    if (targetTabId) {
+      chrome.tabs.update(targetTabId, { url: message.url, active: true }, (updatedTab) => {
+        if (message.keepGalleryOpen) {
+          const onTabUpdated = (tabId, changeInfo, tab) => {
+            if (tabId === targetTabId && changeInfo.status === 'complete') {
+              chrome.tabs.onUpdated.removeListener(onTabUpdated);
+              setTimeout(() => {
+                toggleGallery(tab);
+              }, 700);
+            }
+          };
+          chrome.tabs.onUpdated.addListener(onTabUpdated);
+          setTimeout(() => {
+            try { chrome.tabs.onUpdated.removeListener(onTabUpdated); } catch {}
+          }, 30000);
+        }
+      });
+    } else {
+      chrome.tabs.create({ url: message.url, active: true }, (newTab) => {
+        if (message.keepGalleryOpen && newTab?.id) {
+          const onTabUpdated = (tabId, changeInfo, tab) => {
+            if (tabId === newTab.id && changeInfo.status === 'complete') {
+              chrome.tabs.onUpdated.removeListener(onTabUpdated);
+              setTimeout(() => {
+                toggleGallery(tab);
+              }, 700);
+            }
+          };
+          chrome.tabs.onUpdated.addListener(onTabUpdated);
+        }
+      });
+    }
   }
 
   if (message?.type === 'mosaic-close-overlay' && message.tabId) {
@@ -259,11 +314,63 @@ async function setupDnrRules() {
         urlFilter: '||youtube-nocookie.com/',
         resourceTypes: ['sub_frame', 'xmlhttprequest', 'media', 'other']
       }
+    },
+    {
+      id: 103,
+      priority: 2,
+      action: {
+        type: 'modifyHeaders',
+        responseHeaders: [
+          { header: 'content-security-policy', operation: 'remove' },
+          { header: 'content-security-policy-report-only', operation: 'remove' },
+          { header: 'x-frame-options', operation: 'remove' }
+        ]
+      },
+      condition: {
+        urlFilter: '||instagram.com/',
+        resourceTypes: ['main_frame', 'sub_frame']
+      }
+    },
+    {
+      id: 104,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [
+          { header: 'Referer', operation: 'set', value: 'https://www.instagram.com/' }
+        ],
+        responseHeaders: [
+          { header: 'access-control-allow-origin', operation: 'set', value: '*' },
+          { header: 'cross-origin-resource-policy', operation: 'set', value: 'cross-origin' }
+        ]
+      },
+      condition: {
+        urlFilter: '||cdninstagram.com/',
+        resourceTypes: ['image', 'media', 'xmlhttprequest', 'sub_frame', 'other']
+      }
+    },
+    {
+      id: 105,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [
+          { header: 'Referer', operation: 'set', value: 'https://www.instagram.com/' }
+        ],
+        responseHeaders: [
+          { header: 'access-control-allow-origin', operation: 'set', value: '*' },
+          { header: 'cross-origin-resource-policy', operation: 'set', value: 'cross-origin' }
+        ]
+      },
+      condition: {
+        urlFilter: '||fbcdn.net/',
+        resourceTypes: ['image', 'media', 'xmlhttprequest', 'sub_frame', 'other']
+      }
     }
   ];
   try {
     await chrome.declarativeNetRequest.updateDynamicRules({
-      removeRuleIds: [101, 102],
+      removeRuleIds: [101, 102, 103, 104, 105],
       addRules: rules
     });
   } catch (err) {

@@ -48,14 +48,210 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
   if (window.__mosaicWatcher?.observer) window.__mosaicWatcher.observer.disconnect();
   if (window.__mosaicWatcher) delete window.__mosaicWatcher;
 
-  const bestSrcset = (value = '') =>
-    value.split(',')
-      .map(part => {
-        const bits = part.trim().split(/\s+/);
-        return { url: bits[0], metric: parseFloat(bits[1]) || 0 };
-      })
-      .filter(x => x.url)
-      .sort((a, b) => b.metric - a.metric)[0]?.url || '';
+  const bestSrcset = (value = '') => {
+    if (!value || typeof value !== 'string') return '';
+    const parts = value.split(/,\s*(?=https?:)/);
+    const candidates = [];
+    for (const part of parts) {
+      const bits = part.trim().split(/\s+/);
+      const url = bits[0];
+      const metric = parseFloat(bits[1]) || 0;
+      if (url && !isDisallowedMediaUrl(url)) {
+        candidates.push({ url, metric });
+      }
+    }
+    candidates.sort((a, b) => b.metric - a.metric);
+    return candidates[0]?.url || '';
+  };
+
+  const getInstagramShortcode = (url) => {
+    if (!url) return '';
+    const m = String(url).match(/(?:instagram\.com\/(?:p|reel|reels)\/|\/p\/|\/reel\/|\/reels\/)([a-zA-Z0-9_-]+)/i);
+    return m ? m[1] : '';
+  };
+
+  const extractHashtags = (text) => {
+    if (!text || typeof text !== 'string') return [];
+    const matches = text.match(/#([a-zA-Z0-9_\u0080-\uffff]+)/g);
+    if (!matches) return [];
+    return [...new Set(matches.map(m => m.slice(1).toLowerCase()))];
+  };
+
+  const extractMentions = (text) => {
+    if (!text || typeof text !== 'string') return [];
+    const matches = text.match(/@([a-zA-Z0-9_\.]+)/g);
+    if (!matches) return [];
+    return [...new Set(matches.map(m => m.slice(1)))];
+  };
+
+  const getInstagramProfileFromPath = (pathname = '') => {
+    try {
+      const path = (pathname || location.pathname || '').replace(/^\/+|\/+$/g, '');
+      const parts = path.split('/');
+      const first = parts[0] || '';
+      const reserved = new Set(['', 'p', 'reel', 'reels', 'stories', 'explore', 'direct', 'accounts', 'developer', 'about', 'legal', 'terms', 'privacy', 'directory', 'tag', 'tags', 'archive']);
+      if (first && !reserved.has(first.toLowerCase()) && /^[a-zA-Z0-9_\.]+$/.test(first)) {
+        return first;
+      }
+    } catch {}
+    return '';
+  };
+
+  const getInstagramTagFromPath = (pathname = '') => {
+    try {
+      const path = pathname || location.pathname || '';
+      const m = path.match(/\/explore\/tags\/([^\/?#]+)/i) || path.match(/\/tags\/([^\/?#]+)/i);
+      return m ? decodeURIComponent(m[1]) : '';
+    } catch {}
+    return '';
+  };
+
+  const captureVideoFrame = (vid) => {
+    if (!vid) return '';
+    try {
+      if (vid.videoWidth > 0 && vid.videoHeight > 0) {
+        const canvas = document.createElement('canvas');
+        const maxDim = 720;
+        let w = vid.videoWidth;
+        let h = vid.videoHeight;
+        if (w > maxDim || h > maxDim) {
+          if (w >= h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(vid, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          if (dataUrl && dataUrl.length > 500) return dataUrl;
+        }
+      }
+    } catch {}
+    return '';
+  };
+
+  const extractInstagramPoster = (container) => {
+    if (!container) return '';
+    let root = container;
+    if (root.matches?.('video')) {
+      root = root.closest('a[href*="/p/"], a[href*="/reel/"], article, div[role="dialog"]') || root.parentElement?.parentElement || root.parentElement || root;
+    }
+    if (!root.querySelector?.('img, picture source, canvas, [style*="background-image"], [style*="background:"]')) {
+      const up = root.closest?.('a[href*="/p/"], a[href*="/reel/"], article, div[role="dialog"]');
+      if (up) root = up;
+    }
+
+    // 0. Container itself is an img
+    if (root.matches?.('img')) {
+      const s = bestSrcset(root.getAttribute('srcset') || root.getAttribute('data-srcset') || '') ||
+                root.currentSrc ||
+                root.src ||
+                root.getAttribute('data-src') ||
+                root.getAttribute('data-lazy-src') ||
+                root.getAttribute('data-original') || '';
+      if (s && !isDisallowedMediaUrl(s) && !isProfileOrAvatarUrl(s) && !s.startsWith('data:image/svg') && !s.includes('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')) {
+        return s;
+      }
+    }
+
+    // 1. Picture source srcset
+    const picSources = [...root.querySelectorAll('picture source')];
+    for (const s of picSources) {
+      const srcset = s.getAttribute('srcset') || s.getAttribute('data-srcset') || '';
+      const best = bestSrcset(srcset);
+      if (best && !isDisallowedMediaUrl(best) && !isProfileOrAvatarUrl(best)) return best;
+    }
+
+    // 2. Video element poster attribute or frame capture
+    const vids = root.matches?.('video') ? [root] : [...root.querySelectorAll('video')];
+    for (const vid of vids) {
+      const vPoster = vid.getAttribute('poster') || vid.poster || '';
+      if (vPoster && !vPoster.startsWith('blob:') && !isDisallowedMediaUrl(vPoster) && !isProfileOrAvatarUrl(vPoster)) {
+        return vPoster;
+      }
+      const frame = captureVideoFrame(vid);
+      if (frame) return frame;
+    }
+
+    // 3. Img tags (excluding headers/avatars and 1x1 GIF placeholders)
+    const imgs = [...root.querySelectorAll('img')].filter(img => {
+      if (img.closest('header, nav, [role="navigation"]') || /avatar|profile picture/i.test(img.alt || '') || img.alt === 'Avatar') return false;
+      return true;
+    });
+    for (const img of imgs) {
+      const src = bestSrcset(img.getAttribute('srcset') || img.getAttribute('data-srcset') || '') ||
+                  img.currentSrc ||
+                  img.src ||
+                  img.getAttribute('data-src') ||
+                  img.getAttribute('data-lazy-src') ||
+                  img.getAttribute('data-original') || '';
+      if (src && !isDisallowedMediaUrl(src) && !isProfileOrAvatarUrl(src) && !src.startsWith('data:image/svg') && !src.includes('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')) {
+        return src;
+      }
+    }
+
+    // 4. Canvas tags (Instagram blurhash/preview frames)
+    const canvases = root.matches?.('canvas') ? [root] : [...root.querySelectorAll('canvas')];
+    for (const c of canvases) {
+      try {
+        if (c.width > 20 && c.height > 20) {
+          const dUrl = c.toDataURL('image/jpeg', 0.82);
+          if (dUrl && dUrl.length > 500) return dUrl;
+        }
+      } catch {}
+    }
+
+    // 5. Background-image (both inline and computed)
+    const bgEls = [...root.querySelectorAll('[style*="background-image"], [style*="background:"]')];
+    for (const el of bgEls) {
+      const bg = el.style.backgroundImage || el.style.background || '';
+      const m = bg.match(/url\(['"]?([^'")]+)['"]?\)/i);
+      if (m && m[1] && !isDisallowedMediaUrl(m[1]) && !isProfileOrAvatarUrl(m[1])) {
+        return m[1];
+      }
+    }
+
+    try {
+      const cStyle = window.getComputedStyle(root);
+      const cBg = cStyle?.backgroundImage || '';
+      const m = cBg.match(/url\(['"]?([^'")]+)['"]?\)/i);
+      if (m && m[1] && !isDisallowedMediaUrl(m[1]) && !isProfileOrAvatarUrl(m[1])) {
+        return m[1];
+      }
+    } catch {}
+
+    // 6. Recent Instagram photo entries from resource performance
+    try {
+      const entries = performance.getEntriesByType('resource');
+      for (let i = entries.length - 1; i >= 0 && i >= entries.length - 30; i--) {
+        const name = entries[i].name;
+        if (name && /(?:cdninstagram\.com|fbcdn\.net)\/.*(?:[?&]stp=dst-jpg|\/v\/t51\.|\.jpg|\.webp)/i.test(name) &&
+            !isDisallowedMediaUrl(name) && !isProfileOrAvatarUrl(name)) {
+          return name;
+        }
+      }
+    } catch {}
+
+    return '';
+  };
+
+  const cleanInstagramVideoUrl = (url) => {
+    if (!url || typeof url !== 'string') return '';
+    try {
+      const u = new URL(url);
+      u.searchParams.delete('bytestart');
+      u.searchParams.delete('byteend');
+      return u.href;
+    } catch {
+      return url.replace(/([?&])byte(?:start|end)=\d+(&|$)/gi, '$1').replace(/[?&]$/, '');
+    }
+  };
 
   const xVariantCache = new WeakMap();
   const readXVariant = (tweet) => {
@@ -305,7 +501,7 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
   const watcher = {
     version: 4,
     includeBackgrounds,
-    seen: new Set(),
+    seen: new Map(),
     timer: null,
     pendingNodes: new Set(),
     scan(targetNode = null) {
@@ -316,50 +512,74 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
         const host = location.hostname.toLowerCase();
         const isX = host === 'x.com' || host.endsWith('.x.com') || host.includes('twitter.com');
         const isReddit = host.includes('reddit.com');
+        const isInstagram = host.includes('instagram.com');
         if (isX) {
           if (node?.closest?.('[data-testid*="UserAvatar"], [data-testid*="user-avatar"], [data-testid="Tweet-User-Avatar"], [data-testid="userAvatarContainer"]')) return;
           if (/profile photo|avatar|profile picture/i.test(node?.getAttribute?.('alt') || '')) return;
+        }
+        if (isInstagram) {
+          if (node?.closest?.('header, nav, [role="navigation"]')) return;
+          if (/avatar|profile picture/i.test(node?.getAttribute?.('alt') || '') || node?.getAttribute?.('alt') === 'Avatar') return;
+          if (isProfileOrAvatarUrl(url) || isProfileOrAvatarUrl(poster)) return;
         }
         try {
           const absolute = new URL(url, location.href).href;
           if (!/^https?:|^blob:|^data:image\/(?!svg)/i.test(absolute) || isDisallowedMediaUrl(absolute) || isProfileOrAvatarUrl(absolute)) return;
           const postUrl = meta.postUrl ||
-            node?.closest?.('article,[data-testid="tweet"]')?.querySelector?.('a[href*="/status/"]')?.href ||
+            (isInstagram ? (node?.closest?.('article')?.querySelector?.('a[href*="/p/"], a[href*="/reel/"]')?.href || node?.closest?.('a[href*="/p/"], a[href*="/reel/"]')?.href || '') : (node?.closest?.('article,[data-testid="tweet"]')?.querySelector?.('a[href*="/status/"]')?.href ||
             node?.closest?.('article,[data-testid="tweet"]')?.querySelector?.('time')?.closest?.('a')?.href ||
-            (isX && location.pathname.includes('/status/') ? location.href.split('?')[0] : '');
+            (isX && location.pathname.includes('/status/') ? location.href.split('?')[0] : '')));
           const directXVideo = isX && type === 'video' && new URL(absolute).hostname === 'video.twimg.com' && /\.mp4(?:[?#]|$)/i.test(absolute);
-          const pagePlayback = type === 'video' && ((isX && !directXVideo) || /^blob:/i.test(absolute) || /\.m3u8(?:[?#]|$)|\.mpd(?:[?#]|$)/i.test(absolute));
-          const playableUrl = meta.playbackPage || (pagePlayback ? (isX && postUrl ? postUrl : `${location.href}#mosaic-video-${[...document.querySelectorAll('video')].indexOf(node)}`) : absolute);
-          const width = node?.naturalWidth || node?.videoWidth || node?.width || 0;
-          const height = node?.naturalHeight || node?.videoHeight || node?.height || 0;
+          const isIgBlob = isInstagram && type === 'video' && /^blob:/i.test(absolute);
+          const pagePlayback = type === 'video' && ((isX && !directXVideo) || (siteKey !== 'instagram' && /^blob:/i.test(absolute)) || /\.m3u8(?:[?#]|$)|\.mpd(?:[?#]|$)/i.test(absolute));
+          const playableUrl = isIgBlob ? '' : (meta.playbackPage || (pagePlayback ? (isX && postUrl ? postUrl : `${location.href}#mosaic-video-${[...document.querySelectorAll('video')].indexOf(node)}`) : absolute));
+          const finalUrl = isIgBlob ? (poster || postUrl || location.href) : (meta.url || playableUrl);
+          const width = node?.naturalWidth || node?.videoWidth || node?.width || meta.width || 0;
+          const height = node?.naturalHeight || node?.videoHeight || node?.height || meta.height || 0;
           const duration = (type === 'video' && node && typeof node.duration === 'number' && Number.isFinite(node.duration) && node.duration > 0)
             ? Math.round(node.duration)
             : (meta.duration || 0);
           if (type === 'image' && ((width > 0 && width < 32) || (height > 0 && height < 32))) return;
-          const seenKey = `${type}:${absolute}`;
-          if (this.seen.has(seenKey)) return;
-          this.seen.add(seenKey);
+          const postKey = (meta.postId && (meta.site || (isInstagram ? 'instagram' : '')))
+            ? `${meta.site || (isInstagram ? 'instagram' : '')}:post:${meta.postId}:${meta.galleryIndex ?? ''}`
+            : null;
+          const seenKey = postKey || `${type}:${finalUrl}`;
+          const prevSeenType = this.seen.get(seenKey);
+          if (prevSeenType === 'video') return;
+          if (prevSeenType === type) return;
+          this.seen.set(seenKey, type);
+          if (postKey) this.seen.set(postKey, type);
           chrome.runtime.sendMessage({
             type: 'mosaic-live-media',
             tabId: targetTabId,
             media: {
-              url: playableUrl,
+              url: finalUrl,
               type,
               duration: duration || meta.duration || 0,
-              previewUrl: type === 'image' ? (node?.currentSrc || node?.getAttribute?.('src') || absolute) : '',
-              alt: node?.alt || node?.getAttribute?.('aria-label') || meta.alt || '',
+              previewUrl: type === 'image' ? (node?.currentSrc || node?.getAttribute?.('src') || absolute) : (poster || ''),
+              alt: meta.alt || node?.alt || node?.getAttribute?.('aria-label') || '',
               pageUrl: location.href,
               pageTitle: document.title,
               width,
               height,
-              source: node?.currentSrc || node?.getAttribute?.('src') || absolute,
+              source: node?.currentSrc || node?.getAttribute?.('src') || finalUrl,
               mime: node?.type || '',
               poster: poster || node?.getAttribute?.('poster') || '',
-              playbackPage: meta.playbackPage || (pagePlayback ? playableUrl : ''),
+              playbackPage: isIgBlob ? postUrl : (meta.playbackPage || (pagePlayback ? playableUrl : '')),
               postUrl: meta.postUrl || postUrl,
-              postId: meta.postId || '',
+              postId: meta.postId || (isInstagram ? (String(postUrl).match(/(?:p|reel|reels)\/([a-zA-Z0-9_-]+)/i)?.[1] || '') : ''),
               postType: meta.postType || '',
-              site: meta.site || (isX ? 'x' : isReddit ? 'reddit' : ''),
+              author: meta.author || '',
+              caption: meta.caption || '',
+              hashtags: meta.hashtags || extractHashtags(meta.caption || ''),
+              mentions: meta.mentions || extractMentions(meta.caption || ''),
+              tags: meta.tags || meta.hashtags || extractHashtags(meta.caption || ''),
+              likes: meta.likes || 0,
+              commentCount: meta.commentCount || 0,
+              galleryIndex: meta.galleryIndex != null ? meta.galleryIndex : null,
+              galleryTotal: meta.galleryTotal != null ? meta.galleryTotal : null,
+              isGallery: Boolean(meta.isGallery),
+              site: meta.site || (isInstagram ? 'instagram' : isX ? 'x' : isReddit ? 'reddit' : ''),
               fallbackUrls: meta.fallbackUrls || []
             }
           }).catch(() => {});
@@ -643,6 +863,33 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
           }
           if (el.matches?.('img')) {
             if (isYouTube) continue;
+            if (isInstagram) {
+              if (el.closest('header, nav, [role="navigation"]') || /avatar|profile picture/i.test(el.getAttribute('alt') || '') || el.getAttribute('alt') === 'Avatar') continue;
+              const gridLink = el.closest('a[href*="/p/"], a[href*="/reel/"]');
+              if (gridLink) {
+                if (gridLink.querySelector('video')) continue;
+                const isReel = /\/reel\//i.test(gridLink.href || '') ||
+                  Boolean(gridLink.querySelector('svg[aria-label="Reel"], svg[aria-label="Clip"], span[aria-label="Reel"], [aria-label*="reel" i], [aria-label*="clip" i], [aria-label*="video" i]'));
+                if (isReel) {
+                  const pId = getInstagramShortcode(gridLink.href);
+                  const pUrl = pId ? `https://www.instagram.com/p/${pId}/` : gridLink.href;
+                  add(src, 'video', el, src, {
+                    site: 'instagram',
+                    postId: pId,
+                    postUrl: pUrl,
+                    pageUrl: pUrl,
+                    playbackPage: pUrl,
+                    poster: src,
+                    alt: el.alt || 'Instagram reel'
+                  });
+                  continue;
+                }
+              }
+              const article = el.closest('article');
+              if (article && article.querySelector('video')) {
+                continue;
+              }
+            }
             if (isTumblr && (el.closest?.('figure[aria-label="Avatar"], [data-testid="post-header-avatar"], .post-avatar, header') || el.alt === 'Avatar')) continue;
             const src = el.currentSrc || el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-original') || bestSrcset(el.getAttribute('srcset') || el.getAttribute('data-srcset') || '');
             const host = location.hostname.toLowerCase();
@@ -740,7 +987,7 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
           if (el.matches?.('source')) {
             const parent = el.closest('video,picture');
             if (parent?.matches('video')) {
-              if (isYouTube) continue;
+              if (isYouTube || isInstagram) continue;
               if (host.includes('reddit.com') && parent.closest('shreddit-post')) continue;
               const sources = [...parent.querySelectorAll('source')];
               const supported = sources.find(s => !s.type || parent.canPlayType(s.type)) || sources[0];
@@ -750,6 +997,64 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
           if (el.matches?.('video')) {
             if (isYouTube) continue;
             if (host.includes('reddit.com') && el.closest('shreddit-post')) continue;
+            if (isInstagram) {
+              const article = el.closest('article') || el.closest('div[role="dialog"]');
+              const postLink = article?.querySelector('a[href*="/p/"], a[href*="/reel/"]') || el.closest('a[href*="/p/"], a[href*="/reel/"]');
+              const postId = getInstagramShortcode(postLink?.href || location.href);
+              const postUrl = postId ? `https://www.instagram.com/p/${postId}/` : (postLink?.href || location.href);
+              const container = el.closest('a[href*="/p/"], a[href*="/reel/"], article, div[role="dialog"]') || el.parentElement?.parentElement || article;
+              const poster = el.poster || el.getAttribute('poster') || extractInstagramPoster(container);
+              let vidSrc = (!el.currentSrc?.startsWith('blob:') && el.currentSrc) || (!el.src?.startsWith('blob:') && el.src) || '';
+              const profileAuthor = getInstagramProfileFromPath();
+              const authorEl = article?.querySelector('header a[role="link"], header a[href^="/"], a[href^="/"][tabindex="0"]');
+              const author = authorEl?.textContent?.trim() || authorEl?.getAttribute('href')?.replace(/^\/|\/$/g, '') || profileAuthor || '';
+              const captionEl = article?.querySelector('h1, span[dir="auto"], [data-testid="post-comment-root"]');
+              const caption = captionEl?.textContent?.trim() || '';
+              const tagFromPath = getInstagramTagFromPath();
+              const hashtags = extractHashtags(caption);
+              if (tagFromPath && !hashtags.includes(tagFromPath)) hashtags.push(tagFromPath);
+              const mentions = extractMentions(caption);
+              add(vidSrc || poster || postUrl, 'video', el, poster, {
+                site: 'instagram',
+                postId,
+                author,
+                postUrl,
+                pageUrl: postUrl,
+                caption,
+                hashtags,
+                mentions,
+                tags: hashtags,
+                source: vidSrc || poster,
+                playbackPage: vidSrc ? '' : postUrl
+              });
+
+              if (!poster || isDisallowedMediaUrl(poster) || isProfileOrAvatarUrl(poster)) {
+                const onFrameReady = () => {
+                  try {
+                    const snap = captureVideoFrame(el);
+                    if (snap) {
+                      add(vidSrc || snap || postUrl, 'video', el, snap, {
+                        site: 'instagram',
+                        postId,
+                        author,
+                        postUrl,
+                        pageUrl: postUrl,
+                        caption,
+                        hashtags,
+                        mentions,
+                        tags: hashtags,
+                        source: vidSrc || snap,
+                        playbackPage: vidSrc ? '' : postUrl
+                      });
+                    }
+                  } catch {}
+                };
+                el.addEventListener('loadeddata', onFrameReady, { once: true });
+                el.addEventListener('canplay', onFrameReady, { once: true });
+                el.addEventListener('timeupdate', onFrameReady, { once: true });
+              }
+              continue;
+            }
             const sources = [...el.querySelectorAll('source')];
             const supported = sources.find(s => !s.type || el.canPlayType(s.type)) || sources[0];
             const tweet = el.closest('[data-testid="tweet"]');

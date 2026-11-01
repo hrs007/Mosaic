@@ -1,5 +1,11 @@
 import React from 'react';
-import { filename, formatSize } from '../../utils/mediaHelpers.js';
+import {
+  filename,
+  formatSize,
+  getInstagramProfileUrl,
+  getInstagramHashtagUrl,
+  extractHashtags
+} from '../../utils/mediaHelpers.js';
 import {
   StarIcon,
   PipIcon,
@@ -37,7 +43,8 @@ export default function ViewerToolsDrawer({
   isLooping,
   onToggleLoop,
   autoplayViewer,
-  onToggleAutoplay
+  onToggleAutoplay,
+  onNavigateToInstagram
 }) {
   if (!isOpen || !item) return null;
 
@@ -45,6 +52,14 @@ export default function ViewerToolsDrawer({
   const isImage = item.type === 'image' && !isVideo;
   const isReddit = item.site === 'reddit';
   const isX = item.site === 'x';
+  const isInstagram = item.site === 'instagram';
+  const altAuthor = item.alt ? ((item.alt.match(/(?:Photo|Video)\s+by\s+([^.]+?)\s+on/i)?.[1]) || (item.alt.match(/by\s+@?([a-zA-Z0-9_\.]+)/i)?.[1]) || '') : '';
+  const igAuthor = item.author || altAuthor;
+  const igLikes = item.likes != null ? item.likes : (item.likeCount != null ? item.likeCount : '');
+  const hasIgLikes = (typeof igLikes === 'number' && igLikes > 0) || (typeof igLikes === 'string' && igLikes && !/^(?:0|0\s*likes?)$/i.test(igLikes.trim()));
+  const igComments = item.commentCount != null ? item.commentCount : (item.comments != null ? item.comments : '');
+  const hasIgComments = (typeof igComments === 'number' && igComments > 0) || (typeof igComments === 'string' && igComments && !/^(?:0|0\s*comments?)$/i.test(igComments.trim()));
+  const igHashtags = Array.isArray(item.hashtags) && item.hashtags.length ? item.hashtags : extractHashtags(item.caption || item.alt || '');
 
   const subreddit = item.subreddit || '';
   const redditAuthor = item.author || '';
@@ -73,7 +88,7 @@ export default function ViewerToolsDrawer({
           <div className="viewer-drawer-title-row">
             <span className="viewer-drawer-heading">Media Tools & Details</span>
             <span className="viewer-drawer-site-tag">
-              {isReddit ? 'Reddit' : isX ? '𝕏' : (item.site?.toUpperCase() || 'WEB')}
+              {isReddit ? 'Reddit' : isX ? '𝕏' : isInstagram ? 'Instagram' : (item.site?.toUpperCase() || 'WEB')}
             </span>
           </div>
           <button
@@ -205,6 +220,90 @@ export default function ViewerToolsDrawer({
                     >
                       <ExternalLinkIcon size={13} />
                       <span>Open on 𝕏</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isInstagram && (
+            <div className="viewer-drawer-section platform-section">
+              <div className="viewer-drawer-section-title">Instagram Post</div>
+              <div className="instagram-meta-card">
+                <div className="x-author-row">
+                  {igAuthor ? (
+                    <button
+                      className="x-author-btn"
+                      onClick={() => onNavigateToInstagram ? onNavigateToInstagram(getInstagramProfileUrl(igAuthor)) : window.open(getInstagramProfileUrl(igAuthor), '_blank', 'noopener')}
+                      title={`Open @${igAuthor} profile in extension view`}
+                    >
+                      <span className="x-author-name">@{igAuthor}</span>
+                      <span className="x-author-handle" style={{ color: '#f43f5e' }}>↗</span>
+                    </button>
+                  ) : (
+                    <span className="x-author-name">Instagram Media</span>
+                  )}
+
+                  <div className="x-stats-row">
+                    {hasIgLikes && (
+                      <span className="x-stat-badge">♥ {typeof igLikes === 'number' ? Number(igLikes).toLocaleString() : igLikes}</span>
+                    )}
+                    {hasIgComments && (
+                      <span className="x-stat-badge">💬 {typeof igComments === 'number' ? Number(igComments).toLocaleString() : igComments}</span>
+                    )}
+                    {item.galleryTotal > 1 && (
+                      <span className="meta-chip gallery-chip" style={{ fontSize: '10.5px', padding: '2px 8px' }}>
+                        Slide {(item.galleryIndex ?? 0) + 1} of {item.galleryTotal}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Hashtag List */}
+                {igHashtags.length > 0 && (
+                  <div className="instagram-drawer-hashtags">
+                    <div style={{ fontSize: '11px', color: '#94a3b8', margin: '4px 0 2px' }}>
+                      Hashtags (Click to open in extension view):
+                    </div>
+                    <div className="reddit-meta-chips" style={{ gap: '5px' }}>
+                      {igHashtags.map(tag => (
+                        <button
+                          key={tag}
+                          className="meta-chip instagram-tag-chip"
+                          onClick={() => onNavigateToInstagram ? onNavigateToInstagram(getInstagramHashtagUrl(tag)) : window.open(getInstagramHashtagUrl(tag), '_blank', 'noopener')}
+                          title={`Explore #${tag} on Instagram in extension view`}
+                        >
+                          #{tag} ↗
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {item.caption && (
+                  <div className="x-tweet-caption">
+                    {item.caption}
+                  </div>
+                )}
+
+                <div className="drawer-btn-row">
+                  {item.caption && (
+                    <button
+                      className="drawer-action-btn"
+                      onClick={() => onCopyText(item.caption, 'Caption')}
+                    >
+                      <CopyIcon size={13} />
+                      <span>Copy Caption</span>
+                    </button>
+                  )}
+                  {postOrPage && (
+                    <button
+                      className="drawer-action-btn primary"
+                      onClick={() => onNavigateToInstagram ? onNavigateToInstagram(postOrPage) : window.open(postOrPage, '_blank', 'noopener')}
+                    >
+                      <ExternalLinkIcon size={13} />
+                      <span>Open in Extension View ↗</span>
                     </button>
                   )}
                 </div>

@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useGallery } from '../context/GalleryContext.jsx';
+import { getInstagramHashtagUrl } from '../utils/mediaHelpers.js';
 
 export default function SiteTools() {
   const {
@@ -8,8 +9,26 @@ export default function SiteTools() {
     siteFilter,
     setSiteFilter,
     setActiveType,
-    scanPage
+    scanPage,
+    filtered,
+    navigateToInstagram
   } = useGallery();
+
+  const popularHashtags = useMemo(() => {
+    if (siteProfile?.key !== 'instagram' || !Array.isArray(filtered)) return [];
+    const counts = new Map();
+    filtered.forEach(item => {
+      const tags = Array.isArray(item.hashtags) ? item.hashtags : (Array.isArray(item.tags) ? item.tags : []);
+      tags.forEach(t => {
+        const clean = String(t).toLowerCase();
+        counts.set(clean, (counts.get(clean) || 0) + 1);
+      });
+    });
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(e => e[0])
+      .slice(0, 5);
+  }, [siteProfile?.key, filtered]);
 
   if (activeType === 'files') return null;
 
@@ -28,6 +47,7 @@ export default function SiteTools() {
               : siteProfile.key === 'reddit' ? 'Reddit media'
               : siteProfile.key === 'youtube' ? 'YouTube videos'
               : siteProfile.key === 'tumblr' ? 'Tumblr media'
+              : siteProfile.key === 'instagram' ? 'Instagram media'
               : 'Page media'}
           </b>
           <small id="siteHint">
@@ -35,6 +55,7 @@ export default function SiteTools() {
               : siteProfile.key === 'reddit' ? 'Post images · hosted videos · discussions'
               : siteProfile.key === 'youtube' ? 'Watch videos · shorts · embedded players'
               : siteProfile.key === 'tumblr' ? 'Photosets · GIFs · original sizes · posts'
+              : siteProfile.key === 'instagram' ? 'Loaded posts · high-res photos · reels · carousels'
               : 'Actions for media on this page'}
           </small>
         </div>
@@ -152,6 +173,45 @@ export default function SiteTools() {
             >
               Videos
             </button>
+          </>
+        )}
+
+        {siteProfile.key === 'instagram' && (
+          <>
+            <button
+              className={`site-action ${siteFilter === 'instagram' && activeType === 'all' ? 'active' : ''}`}
+              onClick={() => handleSiteFilter('all', 'instagram')}
+            >
+              All Instagram
+            </button>
+            <button
+              className={`site-action ${siteFilter === 'instagram' && activeType === 'image' ? 'active' : ''}`}
+              onClick={() => handleSiteFilter('image', 'instagram')}
+            >
+              Photos
+            </button>
+            <button
+              className={`site-action ${siteFilter === 'instagram' && activeType === 'video' ? 'active' : ''}`}
+              onClick={() => handleSiteFilter('video', 'instagram')}
+            >
+              Reels & Videos
+            </button>
+            <button
+              className={`site-action ${siteFilter === 'instagram-carousels' ? 'active' : ''}`}
+              onClick={() => handleSiteFilter('all', 'instagram-carousels')}
+            >
+              Carousels
+            </button>
+            {popularHashtags.map(tag => (
+              <button
+                key={tag}
+                className="site-action tag-action"
+                onClick={() => navigateToInstagram ? navigateToInstagram(getInstagramHashtagUrl(tag)) : window.open(getInstagramHashtagUrl(tag), '_blank', 'noopener')}
+                title={`Explore #${tag} in extension view`}
+              >
+                #{tag} ↗
+              </button>
+            ))}
           </>
         )}
 

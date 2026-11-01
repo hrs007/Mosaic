@@ -1,9 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useGallery } from '../context/GalleryContext.jsx';
+import {
+  getInstagramProfileUrl,
+  getInstagramHashtagUrl
+} from '../utils/mediaHelpers.js';
 
 export default function CardActionMenu({ item, anchorRect, onClose, onOpenViewer }) {
-  const { downloadItem, removeSavedFile, showToast } = useGallery();
+  const { downloadItem, removeSavedFile, showToast, navigateToInstagram } = useGallery();
   const menuRef = useRef(null);
 
   useEffect(() => {
@@ -115,16 +119,47 @@ export default function CardActionMenu({ item, anchorRect, onClose, onOpenViewer
 
       {isPostDifferent && (
         <>
-          <button onClick={() => { window.open(postOrPage, '_blank', 'noopener'); onClose(); }}>
+          <button onClick={() => {
+            if (item.site === 'instagram' && navigateToInstagram) {
+              navigateToInstagram(postOrPage);
+            } else {
+              window.open(postOrPage, '_blank', 'noopener');
+            }
+            onClose();
+          }}>
             {item.site === 'x' ? 'Open X post ↗'
               : item.site === 'reddit' ? 'Open Reddit thread ↗'
               : item.site === 'youtube' ? 'Watch on YouTube ↗'
               : item.site === 'tumblr' ? 'Open Tumblr post ↗'
+              : item.site === 'instagram' ? 'Open Instagram post in extension view ↗'
               : 'Open source page ↗'}
           </button>
           <button onClick={() => copyText(postOrPage)}>
             Copy source page link
           </button>
+        </>
+      )}
+
+      {item.site === 'instagram' && (
+        <>
+          {item.author && (
+            <button onClick={() => {
+              if (navigateToInstagram) navigateToInstagram(getInstagramProfileUrl(item.author));
+              else window.open(getInstagramProfileUrl(item.author), '_blank', 'noopener');
+              onClose();
+            }}>
+              Open @{item.author} profile in extension view ↗
+            </button>
+          )}
+          {item.hashtags?.length > 0 && (
+            <button onClick={() => {
+              if (navigateToInstagram) navigateToInstagram(getInstagramHashtagUrl(item.hashtags[0]));
+              else window.open(getInstagramHashtagUrl(item.hashtags[0]), '_blank', 'noopener');
+              onClose();
+            }}>
+              Explore #{item.hashtags[0]} in extension view ↗
+            </button>
+          )}
         </>
       )}
 

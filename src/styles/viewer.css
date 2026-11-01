@@ -630,6 +630,57 @@
   border-color: rgba(255, 255, 255, 0.25);
 }
 
+.viewer-badge-pill.instagram-pill {
+  color: #f43f5e;
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+
+.viewer-badge-pill.instagram-pill:hover {
+  background: rgba(244, 63, 94, 0.22);
+  border-color: rgba(244, 63, 94, 0.6);
+}
+
+.viewer-badge-pill .ig-glyph {
+  font-weight: 800;
+  font-size: 11px;
+  color: #f43f5e;
+}
+
+.viewer-badge-pill.comment-pill {
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  cursor: default;
+}
+
+.viewer-badge-pill.instagram-tag-pill {
+  color: #fb7185;
+  background: rgba(244, 63, 94, 0.08);
+  border: 1px solid rgba(244, 63, 94, 0.28);
+  font-weight: 500;
+}
+
+.viewer-badge-pill.instagram-tag-pill:hover {
+  color: #ffffff;
+  background: rgba(244, 63, 94, 0.25);
+  border-color: rgba(244, 63, 94, 0.6);
+}
+
+.meta-chip.instagram-tag-chip {
+  color: #fb7185;
+  background: rgba(244, 63, 94, 0.1);
+  border-color: rgba(244, 63, 94, 0.3);
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.meta-chip.instagram-tag-chip:hover {
+  color: #ffffff;
+  background: rgba(244, 63, 94, 0.25);
+  border-color: rgba(244, 63, 94, 0.6);
+}
+
 /* Reddit Gallery Stepper */
 .viewer-gallery-stepper {
   display: inline-flex;
@@ -932,6 +983,71 @@ body.modal-open {
   transform: rotate(90deg);
 }
 
+/* Platform Video Fallbacks (X / Instagram) */
+.x-video-fallback,
+.instagram-video-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  max-width: 480px;
+  margin: auto;
+  z-index: 10;
+  background: rgba(18, 22, 18, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+  pointer-events: auto;
+  gap: 14px;
+}
+
+.x-video-fallback img,
+.instagram-video-fallback img {
+  max-width: 100%;
+  max-height: 280px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.x-video-fallback p,
+.instagram-video-fallback p {
+  font-size: 13.5px;
+  color: #cbd5e1;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.x-video-fallback .site-action,
+.instagram-video-fallback .site-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f43f5e;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 7px 18px;
+  font: 600 13px var(--sans);
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.x-video-fallback .site-action {
+  background: #1d9bf0;
+}
+
+.x-video-fallback .site-action:hover {
+  background: #0c8de4;
+}
+
+.instagram-video-fallback .site-action:hover {
+  background: #e11d48;
+}
+
 .viewer-retrying-badge {
   position: absolute;
   top: 24px;
@@ -1081,8 +1197,8 @@ body.modal-open {
   color: #94a3b8;
 }
 
-/* Reddit & X Cards */
-.reddit-meta-card, .x-meta-card {
+/* Reddit, X & Instagram Cards */
+.reddit-meta-card, .x-meta-card, .instagram-meta-card {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;

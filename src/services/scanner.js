@@ -2,5 +2,6 @@ export {
   scanPageInTab,
   scanLiveNowInTab,
   startLiveWatcherInTab,
-  advanceTabScroll
+  advanceTabScroll,
+  extractInstagramMainWorldMedia
 } from './scanner/index.js';
