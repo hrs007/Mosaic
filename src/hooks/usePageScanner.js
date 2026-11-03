@@ -88,12 +88,16 @@ export function usePageScanner({
       const copyRichMeta = (target, source) => {
         if (source.subreddit && !target.subreddit) target.subreddit = source.subreddit;
         if (source.author && (!target.author || target.author === '[deleted]' || target.author === '')) target.author = source.author;
+        if (source.authorProfileUrl && !target.authorProfileUrl) target.authorProfileUrl = source.authorProfileUrl;
         if (source.postUrl && (!target.postUrl || /\/(?:search|r\/[^/]+)\/?(?:\?|$)/i.test(target.postUrl))) {
           target.postUrl = source.postUrl;
           target.pageUrl = source.pageUrl || source.postUrl;
         }
         if (source.score && !target.score) target.score = source.score;
         if (source.commentCount && !target.commentCount) target.commentCount = source.commentCount;
+        for (const key of ['redditBody', 'profileDescription', 'communityDescription', 'description']) {
+          if (source[key] && (!target[key] || source[key].length > target[key].length)) target[key] = source[key];
+        }
         if (source.tweetText && (!target.tweetText || source.tweetText.length > target.tweetText.length)) target.tweetText = source.tweetText;
         if (source.authorName && !target.authorName) target.authorName = source.authorName;
         if (source.authorHandle && !target.authorHandle) target.authorHandle = source.authorHandle;
@@ -111,6 +115,7 @@ export function usePageScanner({
         if (source.galleryTotal && !target.galleryTotal) target.galleryTotal = source.galleryTotal;
         if (source.galleryIndex != null && target.galleryIndex == null) target.galleryIndex = source.galleryIndex;
         if (source.blogName && !target.blogName) target.blogName = source.blogName;
+        if (source.blogUrl && !target.blogUrl) target.blogUrl = source.blogUrl;
         if (source.rebloggedFrom && !target.rebloggedFrom) target.rebloggedFrom = source.rebloggedFrom;
         if (source.site === 'instagram' && Array.isArray(source.tags) && source.tags.length) target.tags = [...new Set([...(target.tags || []), ...source.tags])];
         else if (Array.isArray(source.tags) && source.tags.length && (!target.tags || !target.tags.length)) target.tags = source.tags;
@@ -130,11 +135,17 @@ export function usePageScanner({
         if (source.site === 'instagram' && source.author && !target.author) target.author = source.author;
         if (source.site !== 'instagram' && source.postUrl && !target.postUrl) target.postUrl = source.postUrl;
         if (source.site === 'instagram') {
-          if (isUsableInstagramPoster(source.poster) && !isUsableInstagramPoster(target.poster)) target.poster = source.poster;
+          if (source.posterSource === 'dom' && isUsableInstagramPoster(source.poster)) {
+            target.poster = source.poster;
+            target.posterSource = 'dom';
+          } else if (isUsableInstagramPoster(source.poster) && !isUsableInstagramPoster(target.poster)) {
+            target.poster = source.poster;
+          }
         } else if (source.poster && !target.poster) target.poster = source.poster;
         if (source.source && /reddit\.com\/(?:comments|search)\//i.test(target.source || '')) target.source = source.source;
         if (source.site === 'instagram') {
-          if (isUsableInstagramPoster(source.previewUrl) && !isUsableInstagramPoster(target.previewUrl)) target.previewUrl = source.previewUrl;
+          if (source.posterSource === 'dom' && isUsableInstagramPoster(source.previewUrl)) target.previewUrl = source.previewUrl;
+          else if (isUsableInstagramPoster(source.previewUrl) && !isUsableInstagramPoster(target.previewUrl)) target.previewUrl = source.previewUrl;
         } else if (source.previewUrl && !target.previewUrl) target.previewUrl = source.previewUrl;
       };
 
@@ -279,7 +290,11 @@ export function usePageScanner({
             const igKey = getIgPostKey(x);
           if (igKey && igPostToIndex.has(igKey)) {
             const existingIdx = igPostToIndex.get(igKey);
-            const existing = nextMedia[existingIdx];
+            // MediaCard is memoized and compares the item object by reference.
+            // Clone before merging live Instagram metadata so a poster arriving
+            // after the first scan is visible to the card on the next render.
+            const existing = { ...nextMedia[existingIdx] };
+            nextMedia[existingIdx] = existing;
             const beforeMeta = JSON.stringify([existing.caption, existing.author, existing.postUrl, existing.pageUrl, existing.postId, existing.poster, existing.previewUrl, existing.alt, existing.galleryTotal, existing.galleryIndex, existing.likes, existing.commentCount, existing.mentions, existing.tags, existing.hashtags]);
             copyRichMeta(existing, x);
             if (beforeMeta !== JSON.stringify([existing.caption, existing.author, existing.postUrl, existing.pageUrl, existing.postId, existing.poster, existing.previewUrl, existing.alt, existing.galleryTotal, existing.galleryIndex, existing.likes, existing.commentCount, existing.mentions, existing.tags, existing.hashtags])) changed = true;

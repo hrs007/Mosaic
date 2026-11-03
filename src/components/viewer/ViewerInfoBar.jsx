@@ -50,7 +50,8 @@ export default function ViewerInfoBar({
   const isInstagram = item.site === 'instagram';
 
   const subreddit = item.subreddit || '';
-  const redditAuthor = item.author || item.authorHandle || '';
+  const redditProfileFromUrl = String(item.authorProfileUrl || '').match(/reddit\.com\/(?:user|u)\/([^/?#]+)/i)?.[1] || '';
+  const redditAuthor = item.author || item.authorHandle || redditProfileFromUrl || item.alt?.match(/(?:u\/|reddit\.com\/(?:user|u)\/)([\w-]+)/i)?.[1] || '';
   const redditUsername = (() => {
     const value = String(redditAuthor).trim();
     const fromUrl = value.match(/reddit\.com\/(?:user|u)\/([^/?#]+)/i)?.[1];
@@ -62,7 +63,15 @@ export default function ViewerInfoBar({
   const authorHandle = item.authorHandle || '';
   const cleanXHandle = authorHandle.replace(/^@/, '');
 
-  const blogName = item.blogName || '';
+  const blogNameFromUrl = [item.blogUrl, item.postUrl, item.pageUrl].map(value => {
+    try {
+      const url = new URL(value);
+      if (url.hostname.endsWith('.tumblr.com') && !/^(?:www|media|assets)\./i.test(url.hostname)) return url.hostname.split('.')[0];
+      return url.pathname.match(/\/blog\/(?:view\/)?([^/?#]+)/i)?.[1] || (url.hostname === 'www.tumblr.com' ? url.pathname.match(/^\/([^/?#]+)(?:\/|$)/)?.[1] : '') || '';
+    } catch { return ''; }
+  }).find(Boolean) || '';
+  const blogName = item.blogName || blogNameFromUrl || String(item.blogUrl || '').match(/tumblr\.com\/([^/?#]+)/i)?.[1] || '';
+  const blogUrl = item.blogUrl || (blogName ? `https://www.tumblr.com/${encodeURIComponent(blogName)}` : '');
   const rebloggedFrom = item.rebloggedFrom || '';
   const tags = Array.isArray(item.tags) ? item.tags : [];
 
@@ -73,7 +82,10 @@ export default function ViewerInfoBar({
   const hasIgLikes = (typeof igLikes === 'number' && igLikes > 0) || (typeof igLikes === 'string' && igLikes && !/^(?:0|0\s*likes?)$/i.test(igLikes.trim()));
   const igComments = item.commentCount != null ? item.commentCount : (item.comments != null ? item.comments : '');
   const hasIgComments = (typeof igComments === 'number' && igComments > 0) || (typeof igComments === 'string' && igComments && !/^(?:0|0\s*comments?)$/i.test(igComments.trim()));
-  const postText = item.tweetText || (isReddit ? item.caption || item.alt || item.pageTitle || '' : item.caption || '');
+  const redditBodyLines = [...new Set(String(item.redditBody || '').split(/\n+/).map(line => line.trim()).filter(Boolean))];
+  const redditBodyText = redditBodyLines.filter(line => line !== String(item.caption || '').trim()).join('\n');
+  const redditFallbackText = [item.caption, item.alt].find(text => text && !/^(?:media poster|reddit video|reddit image)$/i.test(String(text).trim())) || '';
+  const postText = item.tweetText || (isReddit ? redditBodyText || redditFallbackText : (isInstagram || isTumblr) ? item.caption || '' : '');
   const normalizedHashtags = [...new Set([
     ...(Array.isArray(item.hashtags) ? item.hashtags : []),
     ...(Array.isArray(item.tags) ? item.tags : []),
@@ -111,16 +123,16 @@ export default function ViewerInfoBar({
                 ▲ {redditScore}
               </span>
             )}
-            {redditUsername && (
+            {(redditUsername || item.authorProfileUrl) && (
               <button
                 className="viewer-badge-pill author-pill"
                 onClick={() => {
-                  const url = `https://www.reddit.com/user/${encodeURIComponent(redditUsername)}/`;
+                  const url = item.authorProfileUrl || `https://www.reddit.com/user/${encodeURIComponent(redditUsername)}/`;
                   onNavigateToInstagram ? onNavigateToInstagram(url) : window.open(url, '_blank', 'noopener');
                 }}
                 title="Open Reddit profile in Mosaic"
               >
-                u/{redditUsername} ↗
+                u/{redditUsername || redditProfileFromUrl} ↗
               </button>
             )}
           </div>
@@ -165,7 +177,7 @@ export default function ViewerInfoBar({
             {blogName && (
               <button
                 className="viewer-badge-pill tumblr-pill"
-                onClick={() => window.open(`https://${blogName}.tumblr.com`, '_blank', 'noopener')}
+                onClick={() => onNavigateToInstagram ? onNavigateToInstagram(blogUrl) : window.open(blogUrl, '_blank', 'noopener')}
                 title={`Open ${blogName}'s Tumblr`}
               >
                 <span className="tumblr-glyph">t/</span>
@@ -185,8 +197,11 @@ export default function ViewerInfoBar({
               <button
                 key={tag}
                 className="viewer-badge-pill tumblr-tag-pill"
-                onClick={() => window.open(`https://www.tumblr.com/tagged/${encodeURIComponent(tag)}`, '_blank', 'noopener')}
-                title={`Browse #${tag} on Tumblr`}
+                onClick={() => {
+                  const url = `https://www.tumblr.com/tagged/${encodeURIComponent(tag)}`;
+                  onNavigateToInstagram ? onNavigateToInstagram(url) : window.open(url, '_blank', 'noopener');
+                }}
+                title={`Browse #${tag} on Tumblr in Mosaic`}
               >
                 #{tag}
               </button>
@@ -256,9 +271,9 @@ export default function ViewerInfoBar({
         )}
 
         {/* Title & Dimension */}
-        {!(isVideo && (!item.alt || item.alt === filename(item.url))) && (
-          <span className="viewer-title-text" title={item.alt || filename(item.url)}>
-            {item.alt || filename(item.url)}
+        {!(isVideo && (!item.alt || item.alt === filename(item.url) || /^(?:media poster|tumblr image)$/i.test(item.alt))) && !(isTumblr && /^(?:tumblr image|media poster)$/i.test(item.alt || '')) && !((isReddit || isTumblr) && (postText === item.caption || postText === item.alt)) && (
+          <span className="viewer-title-text" title={isReddit || isTumblr ? item.caption || item.alt || filename(item.url) : item.alt || filename(item.url)}>
+            {isReddit || isTumblr ? item.caption || item.alt || filename(item.url) : item.alt || filename(item.url)}
           </span>
         )}
         <small className="viewer-dim-text">

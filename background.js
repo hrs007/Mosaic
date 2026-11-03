@@ -115,8 +115,9 @@ async function toggleGallery(tab) {
           const frame = document.createElement('iframe');
           frame.src = url;
           frame.title = 'Mosaic media gallery';
-          frame.allow = 'autoplay *; picture-in-picture *; encrypted-media *';
-          frame.setAttribute('allow', 'autoplay *; picture-in-picture *; encrypted-media *');
+          frame.allow = 'autoplay *; picture-in-picture *; encrypted-media *; fullscreen *';
+          frame.setAttribute('allow', 'autoplay *; picture-in-picture *; encrypted-media *; fullscreen *');
+          frame.setAttribute('allowfullscreen', '');
           Object.assign(frame.style, {
             all: 'initial',
             display: 'block',
@@ -236,33 +237,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if ((message?.type === 'mosaic-navigate-social' || message?.type === 'mosaic-navigate-to-instagram') && message.url) {
     const senderTabId = sender?.tab?.id;
     const targetTabId = Number(message.tabId) > 0 ? Number(message.tabId) : senderTabId;
-    if (targetTabId) {
+    if (message.keepGalleryOpen) {
+      // Keep the page that hosts the overlay intact. Navigating that tab causes
+      // an apparent refresh and can destroy the source page state.
+      chrome.tabs.create({ url: message.url, active: true }, createdTab => {
+        if (!createdTab?.id) return;
+        const onTabUpdated = (tabId, changeInfo) => {
+          if (tabId !== createdTab.id || changeInfo.status !== 'complete') return;
+          chrome.tabs.onUpdated.removeListener(onTabUpdated);
+          setTimeout(() => {
+            chrome.tabs.get(createdTab.id, currentTab => {
+              if (!chrome.runtime.lastError && currentTab) toggleGallery(currentTab);
+            });
+          }, 700);
+        };
+        chrome.tabs.onUpdated.addListener(onTabUpdated);
+        if (createdTab.status === 'complete') onTabUpdated(createdTab.id, { status: 'complete' });
+        setTimeout(() => {
+          try { chrome.tabs.onUpdated.removeListener(onTabUpdated); } catch {}
+        }, 30000);
+      });
+    } else if (targetTabId) {
       const onUpdatedTab = (updatedTab) => {
         if (chrome.runtime.lastError || !updatedTab) {
-          if (message.keepGalleryOpen) chrome.tabs.create({ url: message.url, active: true }, attachGalleryAfterLoad);
           return;
-        }
-        if (message.keepGalleryOpen) {
-          const onTabUpdated = (tabId, changeInfo, tab) => {
-            if (tabId === targetTabId && changeInfo.status === 'complete') {
-              chrome.tabs.onUpdated.removeListener(onTabUpdated);
-              setTimeout(() => {
-                chrome.tabs.get(targetTabId, currentTab => {
-                  if (!chrome.runtime.lastError && currentTab) toggleGallery(currentTab);
-                });
-              }, 700);
-            }
-          };
-          chrome.tabs.onUpdated.addListener(onTabUpdated);
-          setTimeout(() => {
-            try { chrome.tabs.onUpdated.removeListener(onTabUpdated); } catch {}
-          }, 30000);
         }
       };
       chrome.tabs.update(targetTabId, { url: message.url, active: true }, onUpdatedTab);
     } else {
-      chrome.tabs.create({ url: message.url, active: true }, attachGalleryAfterLoad);
+      chrome.tabs.create({ url: message.url, active: true });
     }
+    // Acknowledge synchronously so the gallery's sendMessage callback doesn't
+    // treat the successful background action as a failed connection and open
+    // a second fallback tab.
+    sendResponse?.({ ok: true });
+    return false;
   }
 
   if (message?.type === 'mosaic-close-overlay' && message.tabId) {

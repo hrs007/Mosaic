@@ -40,7 +40,7 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
            /\.(gif|gifv)(?:[?#]|$)/i.test(item.poster || '');
   };
 
-  if (window.__mosaicWatcher?.version === 4) {
+  if (window.__mosaicWatcher?.version === 5) {
     window.__mosaicWatcher.includeBackgrounds = includeBackgrounds;
     window.__mosaicWatcher.scan();
     return;
@@ -501,9 +501,10 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
   };
 
   const watcher = {
-    version: 4,
+    version: 5,
     includeBackgrounds,
     seen: new Map(),
+    seenPosters: new Map(),
     timer: null,
     pendingNodes: new Set(),
     scan(targetNode = null) {
@@ -547,9 +548,13 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
             : null;
           const seenKey = postKey || `${type}:${finalUrl}`;
           const prevSeenType = this.seen.get(seenKey);
-          if (prevSeenType === 'video') return;
-          if (prevSeenType === type) return;
+          if (prevSeenType === 'video' && type !== 'video') return;
+          if (prevSeenType === type) {
+            const previousPoster = this.seenPosters.get(seenKey) || '';
+            if (!poster || previousPoster === poster) return;
+          }
           this.seen.set(seenKey, type);
+          if (poster) this.seenPosters.set(seenKey, poster);
           if (postKey) this.seen.set(postKey, type);
           chrome.runtime.sendMessage({
             type: 'mosaic-live-media',
@@ -596,6 +601,7 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
         const isYouTube = host.includes('youtube.com') || host.includes('youtu.be');
         const isReddit = host.includes('reddit.com');
         const isTumblr = host.includes('tumblr.com');
+        const isInstagram = host.includes('instagram.com');
         const nodes = [n, ...(n.querySelectorAll ? n.querySelectorAll('img,video,source,shreddit-player,a[href],ytd-thumbnail a#thumbnail, [style]') : [])];
         for (const el of nodes) {
           const ytVideoSelector = 'ytd-thumbnail a#thumbnail, a#thumbnail, a[href*="/watch?v="], a[href*="/watch?"], a[href*="/shorts/"], a[href*="/live/"], a.yt-lockup-metadata-view-model__title, a.yt-lockup-view-model__core-link, a#video-title, a#video-title-link, ytd-reel-item-renderer a[href]';
@@ -871,6 +877,7 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
               if (gridLink) {
                 if (gridLink.querySelector('video')) continue;
                 const isReel = /\/reel\//i.test(gridLink.href || '') ||
+                  /\b(?:reel|clip|video)\b/i.test(`${gridLink.getAttribute('aria-label') || ''} ${gridLink.getAttribute('title') || ''}`) ||
                   Boolean(gridLink.querySelector('svg[aria-label="Reel"], svg[aria-label="Clip"], span[aria-label="Reel"], [aria-label*="reel" i], [aria-label*="clip" i], [aria-label*="video" i]'));
                 if (isReel) {
                   const pId = getInstagramShortcode(gridLink.href);
@@ -1017,7 +1024,10 @@ export function startLiveWatcherInTab(includeBackgrounds, targetTabId) {
               const postLink = article?.querySelector('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]') || el.closest('a[href*="/p/"], a[href*="/reel/"], a[href*="/reels/"]');
               const postId = getInstagramShortcode(postLink?.href || location.href);
               const postUrl = postId ? `https://www.instagram.com/${/\/reels?\//i.test(postLink?.href || location.pathname) ? 'reel' : 'p'}/${postId}/` : (postLink?.href || location.href);
-              const poster = el.poster || el.getAttribute('poster') || el.parentElement?.querySelector?.('img')?.currentSrc || el.parentElement?.querySelector?.('img')?.src || '';
+              const poster = el.poster || el.getAttribute('poster') ||
+                el.parentElement?.querySelector?.('img')?.currentSrc ||
+                el.parentElement?.querySelector?.('img')?.src ||
+                extractInstagramPoster(article || postLink || el);
               let vidSrc = (!el.currentSrc?.startsWith('blob:') && el.currentSrc) || (!el.src?.startsWith('blob:') && el.src) || '';
               const profileAuthor = getInstagramProfileFromPath();
               const authorEl = article?.querySelector('header a[href^="/"], a[role="link"][href^="/"]');

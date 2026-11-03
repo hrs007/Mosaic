@@ -31,6 +31,7 @@ function MediaCard({
 }) {
   const [resolvedSrc, setResolvedSrc] = useState('');
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [hasVideoFrame, setHasVideoFrame] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [menuRect, setMenuRect] = useState(null);
   const [imgBroken, setImgBroken] = useState(false);
@@ -96,6 +97,20 @@ function MediaCard({
   const isGif = isItemGif(item);
   const playableUrl = item.savedFile ? (resolvedSrc || getPlayableVideoUrl(item)) : getPlayableVideoUrl(item);
   const isVideo = item.type === 'video' || Boolean(playableUrl);
+  const tumblrBlogFromUrl = [item.blogUrl, item.postUrl, item.pageUrl].map(value => {
+    try {
+      const url = new URL(value);
+      if (url.hostname.endsWith('.tumblr.com') && !/^(?:www|media|assets)\./i.test(url.hostname)) return url.hostname.split('.')[0];
+      return url.pathname.match(/\/blog\/(?:view\/)?([^/?#]+)/i)?.[1] || (url.hostname === 'www.tumblr.com' ? url.pathname.match(/^\/([^/?#]+)(?:\/|$)/)?.[1] : '') || '';
+    } catch { return ''; }
+  }).find(Boolean) || '';
+  const tumblrBlogName = item.blogName || tumblrBlogFromUrl || String(item.blogUrl || '').match(/tumblr\.com\/([^/?#]+)/i)?.[1] || '';
+  const tumblrAlt = /^(?:media\s+poster|tumblr\s+image)$/i.test(item.alt || '') ? '' : item.alt;
+  const mediaLabel = item.site === 'tumblr'
+    ? (tumblrBlogName ? `@${tumblrBlogName.replace(/^@/, '')}` : item.rebloggedFrom ? `Reblogged from @${item.rebloggedFrom.replace(/^@/, '')}` : item.caption || tumblrAlt && !/^tumblr\s+image$/i.test(tumblrAlt) || item.pageTitle || filename(item.url))
+    : item.site === 'reddit'
+      ? (item.author ? `u/${String(item.author).replace(/^u\//i, '').replace(/^@/, '')}` : item.subreddit ? (String(item.subreddit).startsWith('r/') ? item.subreddit : `r/${item.subreddit}`) : item.caption || item.alt || filename(item.url))
+    : (/^(?:media\s+poster|tumblr\s+image)$/i.test(item.alt || '') ? (item.caption || item.pageTitle || filename(item.url)) : (item.fileName || item.alt || item.caption || filename(item.url)));
   const gifAnimatedUrl = isGif ? getGifAnimatedUrl(item) : '';
   const poster = selectPoster();
 
@@ -107,11 +122,13 @@ function MediaCard({
 
   const [currentVideoUrl, setCurrentVideoUrl] = useState(playableUrl || '');
   const [videoFallbackIndex, setVideoFallbackIndex] = useState(-1);
+  const shouldGenerateVideoFrame = isVideo && !isGif && !posterSrc && isDirectPlayableVideo(currentVideoUrl) && !isViewerOpen;
 
   useEffect(() => {
     const candidate = selectPoster();
     setPosterSrc(candidate);
     setPosterBroken(false);
+    if (candidate) setHasVideoFrame(false);
     setPosterFallbackIndex(-1);
     setPosterRetryCount(0);
   }, [item.poster, item.previewUrl, item.thumbnail, item.previewImage, item.url, item.source, item.fallbackUrls]);
@@ -151,14 +168,14 @@ function MediaCard({
 
   // Video IntersectionObserver for Grid Autoplay
   useEffect(() => {
-    const shouldObserve = (prefs.autoplayMode === 'grid' || isGif) && isVideo && videoRef.current && observer;
+    const shouldObserve = (prefs.autoplayMode === 'grid' || isGif || shouldGenerateVideoFrame) && isVideo && videoRef.current && observer;
     if (shouldObserve) {
       observer.observe(videoRef.current);
       return () => {
         if (videoRef.current) observer.unobserve(videoRef.current);
       };
     }
-  }, [prefs.autoplayMode, isGif, isVideo, observer]);
+  }, [prefs.autoplayMode, isGif, isVideo, shouldGenerateVideoFrame, observer]);
 
   // Handle image load
   const handleImageLoad = (e) => {
@@ -464,8 +481,8 @@ function MediaCard({
               <video
                 ref={videoRef}
                 key={`vid-${retryNonce}-${currentVideoUrl}`}
-                className={`card-video-player ${isVideoPlaying || isGif ? 'is-playing' : ''} ${isGif ? 'is-gif' : ''}`}
-                src={shouldAttachVideo ? currentVideoUrl : undefined}
+                className={`card-video-player ${isVideoPlaying || isGif || hasVideoFrame ? 'is-playing' : ''} ${isGif ? 'is-gif' : ''}`}
+                src={shouldAttachVideo || shouldGenerateVideoFrame ? currentVideoUrl : undefined}
                 poster={posterSrc || undefined}
                 referrerPolicy="no-referrer"
                 muted
@@ -473,8 +490,9 @@ function MediaCard({
                 playsInline
                 loop
                 autoPlay={isGif}
-                preload={isGif ? 'auto' : (prefs.autoplayMode === 'grid' ? 'metadata' : (isHovered ? 'auto' : 'none'))}
+                preload={isGif ? 'auto' : (shouldGenerateVideoFrame || prefs.autoplayMode === 'grid' ? 'metadata' : (isHovered ? 'auto' : 'none'))}
                 data-is-gif={isGif ? 'true' : 'false'}
+                data-preview-frame={shouldGenerateVideoFrame ? 'true' : 'false'}
                 onError={handleVideoError}
                 onPlaying={() => {
                   setIsRetrying(false);
@@ -483,6 +501,13 @@ function MediaCard({
                 onPause={() => {
                   if (!isGif && !isHovered && prefs.autoplayMode !== 'grid') {
                     setIsVideoPlaying(false);
+                  }
+                }}
+                onTimeUpdate={(e) => {
+                  const video = e.currentTarget;
+                  if (video.dataset.previewFrame === 'true' && video.currentTime >= 0.15) {
+                    video.pause();
+                    setHasVideoFrame(true);
                   }
                 }}
                 onLoadedMetadata={(e) => {
@@ -565,9 +590,9 @@ function MediaCard({
       <div className="card-info">
         <span
           className="card-name"
-          title={item.fileName || item.alt || filename(item.url)}
+          title={mediaLabel}
         >
-          {item.fileName || item.alt || filename(item.url)}
+          {mediaLabel}
         </span>
 
         <span className="card-meta">

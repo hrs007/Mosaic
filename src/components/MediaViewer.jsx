@@ -380,18 +380,82 @@ export default function MediaViewer() {
   const handleFullscreenVideo = () => {
     const video = videoRef.current;
     if (!video) return;
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-      setVideoFullscreen(false);
-    } else {
-      if (video.requestFullscreen) {
-        video.requestFullscreen().then(() => setVideoFullscreen(true)).catch(() => {});
-      } else if (video.webkitRequestFullscreen) {
-        video.webkitRequestFullscreen();
-        setVideoFullscreen(true);
+    const isFullscreen = Boolean(
+      document.fullscreenElement === video ||
+      document.fullscreenElement === videoStageRef.current ||
+      document.webkitFullscreenElement === video ||
+      document.webkitFullscreenElement === videoStageRef.current ||
+      video.webkitDisplayingFullscreen
+    );
+    if (isFullscreen) {
+      try {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        const result = exit?.call(document);
+        result?.catch?.(() => {});
+      } catch {}
+      return;
+    }
+
+    const handleFailure = (error) => {
+      // Some browsers permit fullscreening a video but deny arbitrary elements
+      // inside an embed. Try the native video path before giving up.
+      try {
+        if (video.requestFullscreen) {
+          video.requestFullscreen().catch(() => showToast('Fullscreen is blocked by the embedding page'));
+        } else if (video.webkitEnterFullscreen) {
+          video.webkitEnterFullscreen();
+        } else {
+          showToast('Fullscreen is blocked by the embedding page');
+        }
+      } catch {
+        showToast('Fullscreen is blocked by the embedding page');
       }
+      console.warn('Mosaic video fullscreen request failed:', error);
+    };
+
+    // The stage keeps Mosaic controls visible where the browser permits it.
+    // Call directly from the click handler to preserve the user gesture.
+    const target = videoStageRef.current || video;
+    try {
+      const request = target.requestFullscreen || target.webkitRequestFullscreen;
+      if (request) {
+        const result = request.call(target);
+        result?.catch?.(handleFailure);
+      } else if (video.webkitEnterFullscreen) {
+        video.webkitEnterFullscreen();
+      } else if (video.requestFullscreen) {
+        video.requestFullscreen().catch(handleFailure);
+      } else {
+        showToast('Fullscreen is not supported by this browser');
+      }
+    } catch (error) {
+      handleFailure(error);
     }
   };
+
+  useEffect(() => {
+    const syncFullscreen = () => {
+      const video = videoRef.current;
+      setVideoFullscreen(Boolean(
+        document.fullscreenElement === video ||
+        document.fullscreenElement === videoStageRef.current ||
+        document.webkitFullscreenElement === video ||
+        document.webkitFullscreenElement === videoStageRef.current ||
+        video?.webkitDisplayingFullscreen
+      ));
+    };
+
+    document.addEventListener('fullscreenchange', syncFullscreen);
+    document.addEventListener('webkitfullscreenchange', syncFullscreen);
+    videoRef.current?.addEventListener('webkitbeginfullscreen', syncFullscreen);
+    videoRef.current?.addEventListener('webkitendfullscreen', syncFullscreen);
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreen);
+      document.removeEventListener('webkitfullscreenchange', syncFullscreen);
+      videoRef.current?.removeEventListener('webkitbeginfullscreen', syncFullscreen);
+      videoRef.current?.removeEventListener('webkitendfullscreen', syncFullscreen);
+    };
+  }, [item, currentVideoUrl, retryNonce]);
 
   const handleTogglePip = async () => {
     const video = videoRef.current;

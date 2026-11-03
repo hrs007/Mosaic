@@ -74,6 +74,7 @@ export default function ViewerToolsDrawer({
   const redditScore = item.score || '';
   const redditComments = item.commentCount || '';
   const postTitle = item.caption || item.alt || (isReddit ? item.pageTitle : '') || '';
+  const redditBodyText = [...new Set(String(item.redditBody || '').split(/\n+/).map(line => line.trim()).filter(Boolean))].join('\n');
 
   const authorName = item.authorName || '';
   const authorHandle = item.authorHandle || '';
@@ -155,6 +156,19 @@ export default function ViewerToolsDrawer({
                 {postTitle && (
                   <div className="platform-post-title" title={postTitle}>
                     {postTitle}
+                  </div>
+                )}
+
+                {redditBodyText && redditBodyText !== postTitle && (
+                  <div className="platform-post-description">
+                    <strong>Post description</strong>
+                    <p>{redditBodyText}</p>
+                  </div>
+                )}
+                {(item.profileDescription || item.communityDescription) && (
+                  <div className="platform-post-description">
+                    <strong>{item.profileDescription ? 'Profile description' : 'Community description'}</strong>
+                    <p>{item.profileDescription || item.communityDescription}</p>
                   </div>
                 )}
 

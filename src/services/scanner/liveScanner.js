@@ -297,7 +297,7 @@ export function scanLiveNowInTab() {
     return '';
   };
 
-  const extractInstagramPoster = (container) => {
+  const extractInstagramPoster = (container, includeRecentResources = false) => {
     if (!container) return '';
     let root = container;
     if (root.matches?.('video')) {
@@ -387,17 +387,18 @@ export function scanLiveNowInTab() {
       }
     } catch {}
 
-    // 6. Recent Instagram photo entries from resource performance
-    try {
-      const entries = performance.getEntriesByType('resource');
-      for (let i = entries.length - 1; i >= 0 && i >= entries.length - 30; i--) {
-        const name = entries[i].name;
-        if (name && /(?:cdninstagram\.com|fbcdn\.net)\/.*(?:[?&]stp=dst-jpg|\/v\/t51\.|\.jpg|\.webp)/i.test(name) &&
-            !isDisallowedMediaUrl(name) && !isProfileOrAvatarUrl(name)) {
-          return name;
+    // Only whole-page scans may use recent resources: per-post lookups can otherwise
+    // assign a neighboring post's thumbnail to this post.
+    if (includeRecentResources) {
+      try {
+        const entries = performance.getEntriesByType('resource');
+        for (let i = entries.length - 1; i >= 0 && i >= entries.length - 30; i--) {
+          const name = entries[i].name;
+          if (name && /(?:cdninstagram\.com|fbcdn\.net)\/.*(?:[?&]stp=dst-jpg|\/v\/t51\.|\.jpg|\.webp)/i.test(name) &&
+              !isDisallowedMediaUrl(name) && !isProfileOrAvatarUrl(name)) return name;
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     return '';
   };
@@ -925,19 +926,31 @@ export function scanLiveNowInTab() {
 
       const blogAnchor = (
         post.querySelector('[data-testid="post-header-blog-name"]') ||
+        post.querySelector('[data-testid*="blog-name"], [data-testid*="author-name"], a[slot="author-name"]') ||
         post.querySelector('.post-header__blog-name') ||
         post.querySelector('a.reblog_author, a.post_info_author, a.author') ||
         post.querySelector('[data-login-wall-blog-name]') ||
-        post.querySelector('header a[href*="tumblr.com"], header a[href^="/blog/"]')
+        post.querySelector('header a[href*="tumblr.com"], header a[href^="/blog/"]') ||
+        post.querySelector('a[href*="/blog/view/"], a[href*=".tumblr.com/"], a[href*="/blog/"]')
       );
+      const blogHref = blogAnchor?.getAttribute('href') || '';
+      let blogFromHref = blogHref.match(/\/blog\/view\/([^/?#]+)/i)?.[1] || '';
+      if (!blogFromHref && blogHref) {
+        try {
+          const blogHost = new URL(blogHref, location.href).hostname;
+          if (blogHost.endsWith('.tumblr.com') && !/^www\./i.test(blogHost)) blogFromHref = blogHost.split('.')[0];
+        } catch {}
+      }
       let blogName = (
         post.getAttribute('data-login-wall-blog-name') ||
         post.querySelector('[data-login-wall-blog-name]')?.getAttribute('data-login-wall-blog-name') ||
+        blogFromHref ||
         blogAnchor?.textContent?.trim() ||
         (location.hostname.includes('.tumblr.com') && !location.hostname.startsWith('www.') ? location.hostname.split('.')[0] : '') ||
         (location.pathname.startsWith('/') && !['explore', 'tagged', 'dashboard', 'search', 'settings'].includes(location.pathname.split('/')[1]) ? location.pathname.split('/')[1] : '') ||
         ''
       ).replace(/^@/, '');
+      const blogUrl = blogAnchor?.href || (blogName ? `https://www.tumblr.com/${encodeURIComponent(blogName)}` : '');
 
       const reblogAnchor = post.querySelector('.reblog_source, a.reblog-source, .reblog-header a, a.reblogged-from');
       const rebloggedFrom = reblogAnchor?.textContent?.trim().replace(/^@/, '') || '';
@@ -958,8 +971,10 @@ export function scanLiveNowInTab() {
       } catch {}
 
       const captionText = (
-        post.querySelector('[data-testid="post-text"], .post_body, .caption, .body-text, .post-content-text')?.textContent?.trim() ||
-        ''
+        [...new Set([...post.querySelectorAll('[data-testid="post-text"], [data-testid*="post-body"], [data-testid*="post-caption"], [data-testid="post-content"], .post_body, .caption, .body-text, .post-content-text, .reblog-list, p, blockquote')]
+          .map(el => el.innerText?.trim())
+          .filter(text => text && !/^#[\w-]+$/.test(text)))]
+          .join('\n')
       );
 
       const videoEls = [...post.querySelectorAll('video')];
@@ -997,6 +1012,7 @@ export function scanLiveNowInTab() {
           site: 'tumblr',
           postId,
           blogName,
+          blogUrl,
           rebloggedFrom,
           tags,
           postUrl: postUrl || location.href,
@@ -1044,13 +1060,14 @@ export function scanLiveNowInTab() {
           site: 'tumblr',
           postId,
           blogName,
+          blogUrl,
           rebloggedFrom,
           tags,
           postUrl: postUrl || location.href,
           pageUrl: postUrl || location.href,
           pageTitle: document.title,
           caption: captionText,
-          alt: img.alt || captionText.slice(0, 120) || 'Tumblr image',
+          alt: (/^(?:tumblr\s+image|media\s+poster)$/i.test(img.alt || '') ? '' : img.alt) || captionText.slice(0, 120) || (blogName ? `Photo by @${blogName}` : rebloggedFrom ? `Reblogged from @${rebloggedFrom}` : 'Tumblr image'),
           width: img.naturalWidth || data.width || 0,
           height: img.naturalHeight || data.height || 0,
           galleryIndex: totalPhotos > 1 ? idx : null,
@@ -1145,14 +1162,15 @@ export function scanLiveNowInTab() {
 
       const fiberItems = readInstagramMedia(article);
       if (fiberItems && fiberItems.length > 0) {
-        const articlePoster = article.querySelector('video')?.poster || article.querySelector('video')?.getAttribute('poster') || article.querySelector('img')?.currentSrc || article.querySelector('img')?.src || '';
+        const articlePoster = extractInstagramPoster(article);
         article.querySelectorAll('img, video').forEach(el => processedIgMedia.add(el));
         fiberItems.forEach(item => {
-          const itemPoster = [item.poster, item.thumbnail, item.previewImage, item.previewUrl, item.galleryIndex == null ? articlePoster : ''].find(isInstagramPosterUrl) || '';
+          const itemPoster = [item.galleryIndex == null ? articlePoster : '', item.poster, item.thumbnail, item.previewImage, item.previewUrl].find(isInstagramPosterUrl) || '';
           instagramItems.push({
             ...item,
             poster: itemPoster,
             previewUrl: item.type === 'video' ? itemPoster : (item.previewUrl || item.url),
+            posterSource: item.galleryIndex == null && articlePoster ? 'dom' : 'react',
             postId: item.postId || postId,
             author: item.author || author,
             caption: item.caption || caption,
@@ -1171,7 +1189,7 @@ export function scanLiveNowInTab() {
       articleVids.forEach(v => {
         processedIgMedia.add(v);
         const adjacentImg = v.parentElement?.querySelector?.('img');
-        const poster = v.poster || v.getAttribute('poster') || adjacentImg?.currentSrc || adjacentImg?.src || '';
+        const poster = [v.poster, v.getAttribute('poster'), adjacentImg?.currentSrc, adjacentImg?.src, extractInstagramPoster(article)].find(isInstagramPosterUrl) || '';
         let vidSrc = (v.currentSrc && !v.currentSrc.startsWith('blob:') ? v.currentSrc : '') || (v.src && !v.src.startsWith('blob:') ? v.src : '');
         const dur = (typeof v.duration === 'number' && Number.isFinite(v.duration) && v.duration > 0) ? Math.round(v.duration) : 0;
         const mainUrl = vidSrc || postUrl;
@@ -1194,6 +1212,7 @@ export function scanLiveNowInTab() {
           pageUrl: postUrl,
           pageTitle: document.title,
           poster,
+          posterSource: poster ? 'dom' : '',
           duration: dur,
           width: v.videoWidth || 0,
           height: v.videoHeight || 0,
@@ -1263,14 +1282,15 @@ export function scanLiveNowInTab() {
 
       const fiberItems = readInstagramMedia(link);
       if (fiberItems && fiberItems.length > 0) {
-        const domPoster = link.querySelector('img')?.currentSrc || link.querySelector('img')?.src || '';
+        const domPoster = extractInstagramPoster(link);
         link.querySelectorAll('img, video').forEach(el => processedIgMedia.add(el));
         fiberItems.forEach(item => {
-          const itemPoster = [item.poster, item.thumbnail, item.previewImage, domPoster, item.previewUrl].find(isInstagramPosterUrl) || '';
+          const itemPoster = [domPoster, item.poster, item.thumbnail, item.previewImage, item.previewUrl].find(isInstagramPosterUrl) || '';
           instagramItems.push({
             ...item,
             poster: itemPoster,
             previewUrl: item.type === 'video' ? itemPoster : (item.previewUrl || itemPoster),
+            posterSource: domPoster && itemPoster === domPoster ? 'dom' : 'react',
             postId: item.postId || postId,
             author: item.author || profileAuthor,
             postUrl,
@@ -1282,8 +1302,9 @@ export function scanLiveNowInTab() {
       }
 
       const vid = link.querySelector('video');
-      const poster = link.querySelector('img')?.currentSrc || link.querySelector('img')?.src || (vid?.poster || vid?.getAttribute('poster')) || '';
+      const poster = [extractInstagramPoster(link), vid?.poster, vid?.getAttribute('poster')].find(isInstagramPosterUrl) || '';
       const isReelOrVideoLink = /\/reel\//i.test(href) ||
+        /\b(?:reel|clip|video)\b/i.test(`${link.getAttribute('aria-label') || ''} ${link.getAttribute('title') || ''}`) ||
         Boolean(link.querySelector('svg[aria-label="Reel"], svg[aria-label="Clip"], span[aria-label="Reel"], [aria-label*="reel" i], [aria-label*="clip" i], [aria-label*="video" i]'));
 
       if ((vid || isReelOrVideoLink) && (!vid || !processedIgMedia.has(vid))) {
@@ -1306,6 +1327,7 @@ export function scanLiveNowInTab() {
           pageTitle: document.title,
           poster,
           duration: dur,
+          posterSource: poster ? 'dom' : '',
           width: vid?.videoWidth || 0,
           height: vid?.videoHeight || 0,
           alt: link.querySelector('img')?.alt || 'Instagram reel',
@@ -1343,7 +1365,25 @@ export function scanLiveNowInTab() {
     });
   }
 
+  const readRedditText = (root, selectors) => {
+    for (const selector of selectors) {
+      const el = root?.querySelector?.(selector);
+      const text = el?.innerText?.trim() || el?.textContent?.trim();
+      if (text) return text;
+    }
+    return '';
+  };
+  const redditProfileDescription = isReddit ? readRedditText(document, [
+    '[data-testid="profile-description"]', '[data-testid="profile-about"]',
+    'shreddit-profile [slot="description"]', 'shreddit-profile [slot="profile-description"]', '.profile-about'
+  ]) : '';
+  const redditCommunityDescription = isReddit ? readRedditText(document, [
+    '[data-testid="community-description"]', 'shreddit-subreddit-header [slot="description"]',
+    'shreddit-subreddit-header [slot="about"]', '.community-description'
+  ]) : '';
+
   const standardItems = (isYouTube || isInstagram) ? [] : [...document.querySelectorAll('img,video,shreddit-player,[data-testid="tweet"] img')].map(node => {
+    if (node.matches?.('img') && /^media\s+poster$/i.test(node.getAttribute('alt') || '')) return null;
     if (isTumblr && (processedTumblrMedia.has(node) || node.closest?.('figure[aria-label="Avatar"], [data-testid="post-header-avatar"], .post-avatar, header') || node.alt === 'Avatar')) {
       return null;
     }
@@ -1392,6 +1432,7 @@ export function scanLiveNowInTab() {
     let provider = '';
     let subreddit = '';
     let author = '';
+    let authorProfileUrl = '';
     let score = '';
     let commentCount = '';
     let caption = '';
@@ -1414,6 +1455,7 @@ export function scanLiveNowInTab() {
     if (isReddit && redditPost) {
       subreddit = redditPost.getAttribute('subreddit-prefixed-name') || redditPost.getAttribute('subreddit-name') || '';
       const authorPath = redditPost.querySelector('a[href*="/user/"], a[href*="/u/"], a[slot="author-name"]')?.getAttribute('href') || '';
+      authorProfileUrl = authorPath ? new URL(authorPath, location.href).href : '';
       const authorFromPath = authorPath.match(/\/(?:user|u)\/([^/?#]+)/i)?.[1] || '';
       const authorAttr = redditPost.getAttribute('author') || '';
       author = authorFromPath || (/^[a-zA-Z0-9_-]{2,24}$/.test(authorAttr) && !/^(?:deleted|automoderator)$/i.test(authorAttr) ? authorAttr : '');
@@ -1421,6 +1463,10 @@ export function scanLiveNowInTab() {
       commentCount = redditPost.getAttribute('comment-count') || '';
       caption = redditPost.getAttribute('post-title') || redditPost.querySelector('[slot="title"]')?.textContent?.trim() || redditPost.querySelector('h1, h2, h3')?.textContent?.trim() || '';
     }
+    const redditBody = isReddit && redditPost ? readRedditText(redditPost, [
+      '[slot="text-body"]', '[slot="post-body"]', '[data-testid="post-content"]',
+      '[data-click-id="text"]', '.usertext-body'
+    ]) : '';
 
     if (isX && tweet) {
       tweetText = tweet.querySelector('[data-testid="tweetText"]')?.innerText?.trim() ||
@@ -1485,7 +1531,7 @@ export function scanLiveNowInTab() {
       postType: redditPost?.getAttribute('post-type') || '',
       pageUrl: location.href,
       pageTitle: document.title,
-      alt: img?.alt || redditPost?.getAttribute('post-title') || '',
+      alt: redditPost?.getAttribute('post-title') || caption || (/^media\s+poster$/i.test(img?.alt || '') ? '' : img?.alt) || '',
       width: img?.naturalWidth || video?.videoWidth || 0,
       height: img?.naturalHeight || video?.videoHeight || 0,
       poster,
@@ -1493,9 +1539,14 @@ export function scanLiveNowInTab() {
       videoVariants,
       subreddit,
       author,
+      authorProfileUrl,
       score,
       commentCount,
       caption,
+      redditBody,
+      profileDescription: redditProfileDescription,
+      communityDescription: redditCommunityDescription,
+      description: redditBody || redditCommunityDescription || redditProfileDescription,
       tweetText,
       hashtags,
       authorName,

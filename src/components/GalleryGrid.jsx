@@ -74,9 +74,10 @@ export default function GalleryGrid() {
         const video = entry.target;
         if (!video) return;
         const isGif = video.dataset.isGif === 'true';
+        const isPosterlessPreview = video.dataset.previewFrame === 'true';
         const isCardHovered = video.closest('.media-thumb')?.matches(':hover') || false;
         if (entry.isIntersecting && !isViewerOpen) {
-          if (prefs.autoplayMode === 'grid' || isGif || (prefs.autoplayMode === 'hover' && isCardHovered)) {
+          if (prefs.autoplayMode === 'grid' || isGif || (isPosterlessPreview && video.currentTime < 0.15) || (prefs.autoplayMode === 'hover' && isCardHovered)) {
             video.muted = true;
             video.defaultMuted = true;
             video.play().catch(() => {});
